@@ -120,7 +120,7 @@ pub fn merge_layers_into<W: Write>(mut layers: Vec<LayerBlob>, sink: W) -> Resul
     Ok(())
 }
 
-/// Strip leading `./` from paths.
+/// Strip leading `./` or `/` from paths.
 pub fn normalize_path(p: &Path) -> PathBuf {
     let s = p.to_string_lossy();
     let s = s.trim_start_matches("./").trim_start_matches('/');
