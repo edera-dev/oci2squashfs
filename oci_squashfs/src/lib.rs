@@ -1,4 +1,5 @@
 pub mod canonical;
+pub mod decompress;
 pub mod image;
 pub mod layers;
 pub mod overlay;
