@@ -163,3 +163,33 @@ fn regress_absolute_hardlink_target_normalized() {
         "hard link with absolute PAX linkpath must not be dropped after normalization"
     );
 }
+
+/// Bug: a simple whiteout (`.wh.<name>`) on a directory was only suppressing
+/// the directory entry itself, not its children. `is_suppressed` only checked
+/// for `Simple` state at the terminal node of the trie walk, so child paths
+/// like `home/ubuntu/.bashrc` would not match and were emitted anyway.
+/// The fix treats `Simple` the same as `Opaque` in the ancestor check —
+/// once a path is whited out, everything beneath it is suppressed regardless
+/// of whiteout type.
+///
+/// Discovered via: `plexinc/pms-docker:latest` producing a `/home/ubuntu` directory
+/// that umoci correctly suppressed.
+#[test]
+fn regress_simple_whiteout_suppresses_directory_children() {
+    let layer0 = LayerBuilder::new()
+        .add_dir("home/ubuntu")
+        .add_file("home/ubuntu/.bashrc", b"data", 0o644)
+        .finish();
+    let layer1 = LayerBuilder::new().add_whiteout("home", "ubuntu").finish();
+
+    let merged = merge(vec![blob(layer0, 0), blob(layer1, 1)]);
+    let paths = paths_in_tar(&merged);
+    assert!(
+        !paths.iter().any(|p| p == "home/ubuntu"),
+        "whited-out directory must not appear"
+    );
+    assert!(
+        !paths.iter().any(|p| p.starts_with("home/ubuntu/")),
+        "children of whited-out directory must not appear"
+    );
+}

@@ -45,9 +45,10 @@ impl WhiteoutTracker {
         let mut node = &self.root;
         for (i, comp) in components.iter().enumerate() {
             if let Some(state) = &node.state {
-                if let WhiteoutState::Opaque { layer_index } = state {
-                    if current_layer < *layer_index {
-                        return true;
+                match state {
+                    WhiteoutState::Opaque { layer_index }
+                    | WhiteoutState::Simple { layer_index } => {
+                        return current_layer < *layer_index;
                     }
                 }
             }
