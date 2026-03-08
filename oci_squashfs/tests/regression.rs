@@ -13,13 +13,13 @@ use helpers::hardlink_target_in_tar;
 
 // ─── Regression tests ────────────────────────────────────────────────────────
 
-/// Bug: whiteout suppression condition was inverted (`current_layer > layer_index`
-/// instead of `current_layer < layer_index`), causing whiteouts to suppress
-/// entries from *newer* layers rather than older ones. Files removed via
-/// `.wh.<name>` in a later layer were still appearing in the output.
+/// Bug: whiteout suppression condition was inverted (`current_layer > layer_index` instead of
+/// `current_layer < layer_index`), causing whiteouts to suppress entries from *newer* layers rather
+/// than older ones. Files removed via `.wh.<name>` in a later layer were still appearing in the
+/// output.
 ///
-/// Discovered via: `usr/share/vulkan/icd.d/lvp_icd.json` appearing in squashfs
-/// output despite being removed by a dpkg-divert whiteout in a later layer.
+/// Discovered via: `usr/share/vulkan/icd.d/lvp_icd.json` appearing in squashfs output despite being
+/// removed by a dpkg-divert whiteout in a later layer.
 #[test]
 fn regress_whiteout_suppression_direction() {
     let layer0 = LayerBuilder::new()
@@ -40,16 +40,14 @@ fn regress_whiteout_suppression_direction() {
     );
 }
 
-/// Bug: hard link targets longer than 100 bytes were being silently truncated
-/// because we read them via `entry.header().link_name()`, which only reads the
-/// raw 100-byte USTAR `linkname` field. The PAX `linkpath` extension carrying
-/// the full target was ignored. The truncated target path was then not found in
-/// the emitted-path tracker, so the link was silently dropped.
+/// Bug: hard link targets longer than 100 bytes were being silently truncated because we read them
+/// via `entry.header().link_name()`, which only reads the raw 100-byte USTAR `linkname` field. The
+/// PAX `linkpath` extension carrying the full target was ignored. The truncated target path was
+/// then not found in the emitted-path tracker, so the link was silently dropped.
 ///
-/// Discovered via: PostgreSQL/hammerdb timezone hard-link aliases all missing
-/// from squashfs output (e.g. `timezone/Jamaica -> .../America/...` dropped
-/// because the full target path exceeded 100 bytes and was truncated to
-/// `America` or similar).
+/// Discovered via: PostgreSQL/hammerdb timezone hard-link aliases all missing from squashfs output
+/// (e.g. `timezone/Jamaica -> .../America/...` dropped because the full target path exceeded 100
+/// bytes and was truncated to `America` or similar).
 #[test]
 fn regress_long_hardlink_target_truncated() {
     // Construct a target path that exceeds 100 bytes.
@@ -86,9 +84,9 @@ fn regress_long_hardlink_target_truncated() {
     );
 }
 
-/// Variant of the above: hard link and target in different layers, with a long
-/// target path. Guards against the combination of cross-layer deferral and PAX
-/// target resolution both being required simultaneously.
+/// Variant of the above: hard link and target in different layers, with a long target path. Guards
+/// against the combination of cross-layer deferral and PAX target resolution both being required
+/// simultaneously.
 #[test]
 fn regress_long_hardlink_target_cross_layer() {
     let long_dir = "b".repeat(60);
@@ -115,10 +113,9 @@ fn regress_long_hardlink_target_cross_layer() {
     );
 }
 
-/// Bug: normalize_path only stripped leading `./` but not leading `/`. Hard
-/// link targets stored as absolute paths in the tar (e.g. `/usr/share/foo`)
-/// would not match the normalized emitted path (`usr/share/foo`), causing the
-/// link to be silently dropped.
+/// Bug: normalize_path only stripped leading `./` but not leading `/`. Hard link targets stored as
+/// absolute paths in the tar (e.g. `/usr/share/foo`) would not match the normalized emitted path
+/// (`usr/share/foo`), causing the link to be silently dropped.
 #[test]
 fn regress_absolute_hardlink_target_normalized() {
     // Manually construct a layer with an absolute-path hard link target,
@@ -164,16 +161,14 @@ fn regress_absolute_hardlink_target_normalized() {
     );
 }
 
-/// Bug: a simple whiteout (`.wh.<name>`) on a directory was only suppressing
-/// the directory entry itself, not its children. `is_suppressed` only checked
-/// for `Simple` state at the terminal node of the trie walk, so child paths
-/// like `home/ubuntu/.bashrc` would not match and were emitted anyway.
-/// The fix treats `Simple` the same as `Opaque` in the ancestor check —
-/// once a path is whited out, everything beneath it is suppressed regardless
-/// of whiteout type.
+/// Bug: a simple whiteout (`.wh.<name>`) on a directory was only suppressing the directory entry
+/// itself, not its children. `is_suppressed` only checked for `Simple` state at the terminal node
+/// of the trie walk, so child paths like `home/ubuntu/.bashrc` would not match and were emitted
+/// anyway.  The fix treats `Simple` the same as `Opaque` in the ancestor check — once a path is
+/// whited out, everything beneath it is suppressed regardless of whiteout type.
 ///
-/// Discovered via: `plexinc/pms-docker:latest` producing a `/home/ubuntu` directory
-/// that umoci correctly suppressed.
+/// Discovered via: `plexinc/pms-docker:latest` producing a `/home/ubuntu` directory that umoci
+/// correctly suppressed.
 #[test]
 fn regress_simple_whiteout_suppresses_directory_children() {
     let layer0 = LayerBuilder::new()
