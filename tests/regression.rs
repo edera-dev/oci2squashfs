@@ -162,41 +162,6 @@ fn regress_absolute_hardlink_target_normalized() {
     );
 }
 
-/// Tools that manage their own blob storage (e.g. edera) write a bare OCI image manifest
-/// directly as `manifest_layers.json` alongside their blob directory, rather than producing a
-/// two-level OCI layout (index.json → manifest blob → layer blobs).
-/// `load_manifest` must recognise this file and parse it directly as an `OciManifest`.
-#[test]
-fn regress_manifest_layers_json_bare_image_manifest() {
-    let dir = tempfile::tempdir().unwrap();
-    let blobs_sha256 = dir.path().join("blobs").join("sha256");
-    fs::create_dir_all(&blobs_sha256).unwrap();
-
-    // Write a minimal layer blob.
-    let layer_digest = "a".repeat(64);
-    let layer_blob_dir = blobs_sha256.join(&layer_digest);
-    fs::create_dir_all(&layer_blob_dir).unwrap();
-    fs::write(layer_blob_dir.join("0"), b"fake-layer-content").unwrap();
-
-    // Write manifest_layers.json as a bare OCI image manifest.
-    let manifest_json = serde_json::json!({
-        "schemaVersion": 2,
-        "layers": [
-            {
-                "mediaType": "application/vnd.oci.image.layer.v1.tar",
-                "digest": format!("sha256:{layer_digest}"),
-                "size": 18
-            }
-        ]
-    });
-    fs::write(dir.path().join("manifest_layers.json"), manifest_json.to_string()).unwrap();
-
-    let manifest = oci2squashfs::image::load_manifest(dir.path())
-        .expect("load_manifest must succeed for a bare image manifest written as manifest_layers.json");
-    assert_eq!(manifest.layers.len(), 1);
-    assert_eq!(manifest.layers[0].digest, format!("sha256:{layer_digest}"));
-}
-
 /// resolve_layers` constructed layer blob paths as `<image_dir>/blobs/sha256/<hash>` and
 /// expected a plain file there. The some OCI downloaders instead store each blob as a directory
 /// `<image_dir>/blobs/sha256/<hash>/` containing a file named after the layer's manifest order

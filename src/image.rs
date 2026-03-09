@@ -77,19 +77,8 @@ pub fn load_manifest(image_dir: &Path) -> Result<OciManifest> {
         return Ok(OciManifest { layers });
     }
 
-    // manifest_layers.json: a bare OCI image manifest written directly by tools
-    // that manage their own blob storage layout (e.g. edera).
-    let manifest_layers_path = image_dir.join("manifest_layers.json");
-    if manifest_layers_path.exists() {
-        let data = std::fs::read_to_string(&manifest_layers_path)
-            .context("reading manifest_layers.json")?;
-        let manifest: OciManifest =
-            serde_json::from_str(&data).context("parsing manifest_layers.json")?;
-        return Ok(manifest);
-    }
-
     bail!(
-        "no index.json, manifest.json, or manifest_layers.json found in {}",
+        "no index.json or manifest.json found in {}",
         image_dir.display()
     );
 }
