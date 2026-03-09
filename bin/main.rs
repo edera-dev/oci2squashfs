@@ -23,6 +23,24 @@ enum Commands {
         #[arg(long)]
         mksquashfs: Option<PathBuf>,
     },
+    /// Convert an OCI image directory to a tar file.
+    ConvertTar {
+        /// Path to the extracted OCI image directory.
+        #[arg(short, long)]
+        image: PathBuf,
+        /// Output tar file path.
+        #[arg(short, long)]
+        output: PathBuf,
+    },
+    /// Convert an OCI image directory directly into a filesystem directory.
+    ConvertDir {
+        /// Path to the extracted OCI image directory.
+        #[arg(short, long)]
+        image: PathBuf,
+        /// Output directory path.
+        #[arg(short, long)]
+        output: PathBuf,
+    },
     /// Verify a squashfs image against a reference directory.
     Verify {
         /// Path to the .squashfs file.
@@ -41,6 +59,16 @@ async fn main() -> Result<()> {
         Commands::ConvertSquashfs { image, output, mksquashfs } => {
             println!("Converting {} → {}", image.display(), output.display());
             oci2squashfs::convert_mksquashfs(&image, &output, mksquashfs.as_deref()).await?;
+            println!("Done: {}", output.display());
+        }
+        Commands::ConvertTar { image, output } => {
+            println!("Converting {} → {}", image.display(), output.display());
+            oci2squashfs::convert_tar(&image, &output).await?;
+            println!("Done: {}", output.display());
+        }
+        Commands::ConvertDir { image, output } => {
+            println!("Extracting {} → {}", image.display(), output.display());
+            oci2squashfs::convert_dir(&image, &output).await?;
             println!("Done: {}", output.display());
         }
         Commands::Verify {

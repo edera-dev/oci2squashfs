@@ -113,6 +113,24 @@ fn get_fixtures() -> &'static Fixtures {
     })
 }
 
+/// Fixtures for tests that only need the CLI binary (no squashfuse/umoci).
+static FIXTURES_BASIC: OnceLock<Fixtures> = OnceLock::new();
+
+fn get_fixtures_basic() -> &'static Fixtures {
+    FIXTURES_BASIC.get_or_init(|| {
+        let cli = cli_bin();
+        assert!(cli.exists(), "oci2squashfs_cli binary not found at {cli:?}");
+        let dir = TempDir::new().expect("creating fixture temp dir");
+        let images = generate_fixtures(dir.path()).expect("generating OCI fixtures");
+        Fixtures {
+            oci_layout:       images.oci_layout,
+            docker_save:      images.docker_save,
+            docker_save_both: images.docker_save_both,
+            _dir: dir,
+        }
+    })
+}
+
 // ── helpers ───────────────────────────────────────────────────────────────────
 
 /// Run `oci2squashfs_cli convert-squashfs` and return the path to the output file.
@@ -178,6 +196,48 @@ fn verify_clean(squashfs: &Path, reference: &Path, label: &str) {
         squashfs.display(),
         reference.display()
     );
+}
+
+/// Run `oci2squashfs_cli convert-tar` and return the path to the output file.
+fn convert_tar(image_dir: &Path, out_dir: &Path, name: &str) -> PathBuf {
+    let output = out_dir.join(format!("{name}.tar"));
+    let status = Command::new(cli_bin())
+        .args([
+            "convert-tar",
+            "--image",
+            image_dir.to_str().unwrap(),
+            "--output",
+            output.to_str().unwrap(),
+        ])
+        .status()
+        .expect("spawning oci2squashfs_cli convert-tar");
+    assert!(
+        status.success(),
+        "oci2squashfs_cli convert-tar failed for {name} (image: {})",
+        image_dir.display()
+    );
+    output
+}
+
+/// Run `oci2squashfs_cli convert-dir` and return the output directory path.
+fn convert_dir(image_dir: &Path, out_dir: &Path, name: &str) -> PathBuf {
+    let output = out_dir.join(name);
+    let status = Command::new(cli_bin())
+        .args([
+            "convert-dir",
+            "--image",
+            image_dir.to_str().unwrap(),
+            "--output",
+            output.to_str().unwrap(),
+        ])
+        .status()
+        .expect("spawning oci2squashfs_cli convert-dir");
+    assert!(
+        status.success(),
+        "oci2squashfs_cli convert-dir failed for {name} (image: {})",
+        image_dir.display()
+    );
+    output
 }
 
 // ── tests ─────────────────────────────────────────────────────────────────────
@@ -269,4 +329,71 @@ fn e2e_overlay_semantics_verified() {
     let squashfs = convert_squashfs(&fx.oci_layout, work.path(), "overlay-semantics");
     let reference = umoci_unpack(&fx.oci_layout, "latest", work.path(), "overlay-semantics-ref");
     verify_clean(&squashfs, &reference, "overlay semantics");
+}
+
+/// Convert OCI → tar and spot-check that overlay semantics are reflected in
+/// the tar: expected files present, whited-out files absent.
+#[test]
+fn e2e_convert_tar_overlay_semantics() {
+    let fx = get_fixtures_basic();
+    let work = TempDir::new().unwrap();
+
+    let tar_path = convert_tar(&fx.oci_layout, work.path(), "oci-layout");
+    let tar_bytes = std::fs::read(&tar_path).expect("reading output tar");
+
+    // Collect all paths from the tar for inspection.
+    let paths: std::collections::HashSet<String> = {
+        use std::io::Cursor;
+        tar::Archive::new(Cursor::new(&tar_bytes))
+            .entries()
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter_map(|e| e.path().ok().map(|p| p.to_string_lossy().into_owned()))
+            .collect()
+    };
+
+    // Files that must be present after overlay merge.
+    assert!(paths.contains("data/hello.txt"),        "data/hello.txt must be present");
+    assert!(paths.contains("data/layer1.txt"),        "data/layer1.txt must be present");
+    assert!(paths.contains("data/overwrite-me.txt"),  "data/overwrite-me.txt must be present");
+    assert!(paths.contains("opaque-dir/new.txt"),     "opaque-dir/new.txt must be present");
+    assert!(paths.contains("hardlinks/source.txt"),   "hardlinks/source.txt must be present");
+
+    // Files that must be absent after whiteout / opaque-whiteout.
+    assert!(!paths.contains("data/whiteout-me.txt"), "data/whiteout-me.txt must be absent (whiteout)");
+    assert!(!paths.contains("opaque-dir/old.txt"),   "opaque-dir/old.txt must be absent (opaque whiteout)");
+}
+
+/// Convert OCI → directory and verify overlay semantics by inspecting the
+/// extracted filesystem: expected files present with correct content, whited-out
+/// files absent.
+#[test]
+fn e2e_convert_dir_overlay_semantics() {
+    let fx = get_fixtures_basic();
+    let work = TempDir::new().unwrap();
+
+    let dir = convert_dir(&fx.oci_layout, work.path(), "oci-layout-dir");
+
+    // Files that must be present with correct content.
+    assert_eq!(
+        std::fs::read(dir.join("data/hello.txt")).unwrap(),
+        b"hello from layer 0\n",
+    );
+    assert_eq!(
+        std::fs::read(dir.join("data/overwrite-me.txt")).unwrap(),
+        b"overwritten by layer 1\n",
+        "layer 1 must win the overwrite"
+    );
+    assert_eq!(
+        std::fs::read(dir.join("opaque-dir/new.txt")).unwrap(),
+        b"repopulated\n",
+    );
+    assert_eq!(
+        std::fs::read(dir.join("hardlinks/source.txt")).unwrap(),
+        b"hardlink source\n",
+    );
+
+    // Files that must be absent after whiteout / opaque-whiteout.
+    assert!(!dir.join("data/whiteout-me.txt").exists(), "data/whiteout-me.txt must be absent");
+    assert!(!dir.join("opaque-dir/old.txt").exists(),   "opaque-dir/old.txt must be absent");
 }
