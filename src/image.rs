@@ -99,13 +99,7 @@ pub fn resolve_layers(image_dir: &Path, manifest: &OciManifest) -> Result<Vec<La
             let path = if desc.digest.contains(':') {
                 // OCI digest: sha256:<hex>
                 let hex = strip_digest_prefix(&desc.digest)?;
-                // image_dir may be the blobs/ directory itself; check that first
-                let flat = image_dir.join("sha256").join(hex);
-                if flat.exists() {
-                    flat
-                } else {
-                    image_dir.join("blobs").join("sha256").join(hex)
-                }
+                image_dir.join("blobs").join("sha256").join(hex)
             } else {
                 // Docker save: relative path like "abc123.../layer.tar"
                 image_dir.join(&desc.digest)
