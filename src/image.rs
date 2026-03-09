@@ -36,18 +36,24 @@ pub fn load_manifest(image_dir: &Path) -> Result<OciManifest> {
     if index_path.exists() {
         let data = std::fs::read_to_string(&index_path)
             .with_context(|| format!("reading {}", index_path.display()))?;
-        let index: OciIndex = serde_json::from_str(&data).context("parsing index.json")?;
-        let desc = index
-            .manifests
-            .into_iter()
-            .next()
-            .context("index.json has no manifests")?;
-        let digest = strip_digest_prefix(&desc.digest)?;
-        let manifest_path = image_dir.join("blobs").join("sha256").join(digest);
-        let mdata = std::fs::read_to_string(&manifest_path)
-            .with_context(|| format!("reading manifest blob {}", manifest_path.display()))?;
+        // index.json may be an OCI image index (points to a manifest blob) or,
+        // when produced by tools that skip the two-level layout, a bare OCI
+        // image manifest (has "layers" directly).
+        if let Ok(index) = serde_json::from_str::<OciIndex>(&data) {
+            if !index.manifests.is_empty() {
+                let desc = index.manifests.into_iter().next().unwrap();
+                let digest = strip_digest_prefix(&desc.digest)?;
+                let manifest_path = image_dir.join("blobs").join("sha256").join(digest);
+                let mdata = std::fs::read_to_string(&manifest_path)
+                    .with_context(|| format!("reading manifest blob {}", manifest_path.display()))?;
+                let manifest: OciManifest =
+                    serde_json::from_str(&mdata).context("parsing manifest blob")?;
+                return Ok(manifest);
+            }
+        }
+        // Fall through: try parsing index.json directly as an image manifest.
         let manifest: OciManifest =
-            serde_json::from_str(&mdata).context("parsing manifest blob")?;
+            serde_json::from_str(&data).context("parsing index.json as image manifest")?;
         return Ok(manifest);
     }
 
