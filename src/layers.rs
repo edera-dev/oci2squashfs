@@ -1,6 +1,6 @@
 //! Open a layer blob and return a decompressed tar::Archive.
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use std::{
     fs::File,
     io::{self, BufReader, Read},

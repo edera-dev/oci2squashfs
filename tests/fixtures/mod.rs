@@ -22,7 +22,7 @@
 use anyhow::{Context, Result};
 use sha2::{Digest, Sha256};
 use std::{
-    io::{Cursor, Write},  // Cursor used in TarBuilder; Write used in compress_gzip
+    io::{Cursor, Write}, // Cursor used in TarBuilder; Write used in compress_gzip
     path::{Path, PathBuf},
 };
 use tar::{Builder, EntryType, Header};
@@ -59,18 +59,38 @@ pub fn generate_fixtures(base_dir: &Path) -> Result<FixtureImage> {
     // zstd and bzip2 are covered by the unit/integration tests instead.
     // (uncompressed tar, compressed bytes, media_type)
     let layers: Vec<(&[u8], Vec<u8>, &'static str)> = vec![
-        (&layer0_tar, layer0_bytes, "application/vnd.oci.image.layer.v1.tar"),
-        (&layer1_tar, layer1_bytes, "application/vnd.oci.image.layer.v1.tar+gzip"),
-        (&layer2_tar, layer2_bytes, "application/vnd.oci.image.layer.v1.tar+gzip"),
-        (&layer3_tar, layer3_bytes, "application/vnd.oci.image.layer.v1.tar+gzip"),
-        (&layer4_tar, layer4_bytes, "application/vnd.oci.image.layer.v1.tar+gzip"),
+        (
+            &layer0_tar,
+            layer0_bytes,
+            "application/vnd.oci.image.layer.v1.tar",
+        ),
+        (
+            &layer1_tar,
+            layer1_bytes,
+            "application/vnd.oci.image.layer.v1.tar+gzip",
+        ),
+        (
+            &layer2_tar,
+            layer2_bytes,
+            "application/vnd.oci.image.layer.v1.tar+gzip",
+        ),
+        (
+            &layer3_tar,
+            layer3_bytes,
+            "application/vnd.oci.image.layer.v1.tar+gzip",
+        ),
+        (
+            &layer4_tar,
+            layer4_bytes,
+            "application/vnd.oci.image.layer.v1.tar+gzip",
+        ),
     ];
 
     let digested: Vec<DigestedBlob> = layers
         .into_iter()
         .map(|(uncompressed, data, media_type)| DigestedBlob {
-            diff_id: sha256_hex(uncompressed),  // digest of uncompressed tar
-            digest: sha256_hex(&data),           // digest of compressed blob
+            diff_id: sha256_hex(uncompressed), // digest of uncompressed tar
+            digest: sha256_hex(&data),         // digest of compressed blob
             size: data.len() as u64,
             data,
             media_type,
@@ -82,7 +102,11 @@ pub fn generate_fixtures(base_dir: &Path) -> Result<FixtureImage> {
     let docker_save = write_docker_save(base_dir, &digested)?;
     let docker_save_both = write_docker_save_both(base_dir, &digested)?;
 
-    Ok(FixtureImage { oci_layout, docker_save, docker_save_both })
+    Ok(FixtureImage {
+        oci_layout,
+        docker_save,
+        docker_save_both,
+    })
 }
 
 // ── uid / gid ─────────────────────────────────────────────────────────────────
@@ -185,12 +209,11 @@ fn compress_uncompressed(data: &[u8]) -> Vec<u8> {
 }
 
 fn compress_gzip(data: &[u8]) -> Result<Vec<u8>> {
-    use flate2::{write::GzEncoder, Compression};
+    use flate2::{Compression, write::GzEncoder};
     let mut enc = GzEncoder::new(Vec::new(), Compression::default());
     enc.write_all(data)?;
     Ok(enc.finish()?)
 }
-
 
 // ── digest ────────────────────────────────────────────────────────────────────
 
@@ -201,8 +224,8 @@ fn sha256_hex(data: &[u8]) -> String {
 }
 
 struct DigestedBlob {
-    digest: String,     // hex of compressed bytes, no "sha256:" prefix
-    diff_id: String,    // hex of uncompressed tar bytes (OCI diff_id)
+    digest: String,  // hex of compressed bytes, no "sha256:" prefix
+    diff_id: String, // hex of uncompressed tar bytes (OCI diff_id)
     size: u64,
     data: Vec<u8>,
     media_type: &'static str,
@@ -276,10 +299,7 @@ fn write_oci_layout(base: &Path, layers: &[DigestedBlob]) -> Result<PathBuf> {
     std::fs::write(dir.join("index.json"), serde_json::to_vec(&index)?)?;
 
     // Write oci-layout marker (required by spec).
-    std::fs::write(
-        dir.join("oci-layout"),
-        r#"{"imageLayoutVersion":"1.0.0"}"#,
-    )?;
+    std::fs::write(dir.join("oci-layout"), r#"{"imageLayoutVersion":"1.0.0"}"#)?;
 
     Ok(dir)
 }
@@ -322,11 +342,13 @@ fn write_docker_save_both(base: &Path, layers: &[DigestedBlob]) -> Result<PathBu
     // OCI manifest + index.json.
     let manifest_layers: Vec<serde_json::Value> = layers
         .iter()
-        .map(|l| serde_json::json!({
-            "mediaType": l.media_type,
-            "digest": l.digest_with_prefix(),
-            "size": l.size,
-        }))
+        .map(|l| {
+            serde_json::json!({
+                "mediaType": l.media_type,
+                "digest": l.digest_with_prefix(),
+                "size": l.size,
+            })
+        })
         .collect();
     let manifest = serde_json::json!({
         "schemaVersion": 2,
@@ -355,7 +377,10 @@ fn write_docker_save_both(base: &Path, layers: &[DigestedBlob]) -> Result<PathBu
         }]
     });
     std::fs::write(oci_dir.join("index.json"), serde_json::to_vec(&index)?)?;
-    std::fs::write(oci_dir.join("oci-layout"), r#"{"imageLayoutVersion":"1.0.0"}"#)?;
+    std::fs::write(
+        oci_dir.join("oci-layout"),
+        r#"{"imageLayoutVersion":"1.0.0"}"#,
+    )?;
 
     // Also write manifest.json — our code should ignore it when index.json exists.
     write_docker_manifest_json(&oci_dir, layers, &config_digest)?;
@@ -385,7 +410,11 @@ fn make_config_json(layers: &[DigestedBlob]) -> String {
 }
 
 /// Emit a Docker-save `manifest.json` into `dir`.
-fn write_docker_manifest_json(dir: &Path, layers: &[DigestedBlob], config_digest: &str) -> Result<()> {
+fn write_docker_manifest_json(
+    dir: &Path,
+    layers: &[DigestedBlob],
+    config_digest: &str,
+) -> Result<()> {
     let layer_paths: Vec<String> = layers
         .iter()
         .map(|l| format!("blobs/sha256/{}", l.digest))
@@ -411,8 +440,11 @@ fn write_docker_manifest_json(dir: &Path, layers: &[DigestedBlob], config_digest
         "LayerSources": layer_sources,
     }]);
 
-    std::fs::write(dir.join("manifest.json"), serde_json::to_vec(&manifest_json)?)
-        .context("writing manifest.json")?;
+    std::fs::write(
+        dir.join("manifest.json"),
+        serde_json::to_vec(&manifest_json)?,
+    )
+    .context("writing manifest.json")?;
     Ok(())
 }
 

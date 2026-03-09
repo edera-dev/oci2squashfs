@@ -56,7 +56,11 @@ enum Commands {
 async fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
-        Commands::ConvertSquashfs { image, output, mksquashfs } => {
+        Commands::ConvertSquashfs {
+            image,
+            output,
+            mksquashfs,
+        } => {
             println!("Converting {} → {}", image.display(), output.display());
             oci2squashfs::convert_mksquashfs(&image, &output, mksquashfs.as_deref()).await?;
             println!("Done: {}", output.display());

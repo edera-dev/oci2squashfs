@@ -1,7 +1,7 @@
 //! CanonicalTarHeader: a tar Header paired with its PAX extensions.
 //! Ported from production vfs.rs — lets the `tar` crate own PAX serialization.
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use std::borrow::Cow;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};

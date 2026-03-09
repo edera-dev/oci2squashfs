@@ -27,9 +27,9 @@ use tempfile::TempDir;
 
 /// Names and a short description of every external binary we depend on.
 const REQUIRED_BINARIES: &[(&str, &str)] = &[
-    ("mksquashfs",      "squashfs-tools >= 4.6"),
-    ("squashfuse",      "squashfuse"),
-    ("umoci",           "umoci (OCI image unpacker)"),
+    ("mksquashfs", "squashfs-tools >= 4.6"),
+    ("squashfuse", "squashfuse"),
+    ("umoci", "umoci (OCI image unpacker)"),
 ];
 
 /// Returns the path to the compiled `oci2squashfs_cli` binary produced by
@@ -105,8 +105,8 @@ fn get_fixtures() -> &'static Fixtures {
         let dir = TempDir::new().expect("creating fixture temp dir");
         let images = generate_fixtures(dir.path()).expect("generating OCI fixtures");
         Fixtures {
-            oci_layout:       images.oci_layout,
-            docker_save:      images.docker_save,
+            oci_layout: images.oci_layout,
+            docker_save: images.docker_save,
             docker_save_both: images.docker_save_both,
             _dir: dir,
         }
@@ -123,8 +123,8 @@ fn get_fixtures_basic() -> &'static Fixtures {
         let dir = TempDir::new().expect("creating fixture temp dir");
         let images = generate_fixtures(dir.path()).expect("generating OCI fixtures");
         Fixtures {
-            oci_layout:       images.oci_layout,
-            docker_save:      images.docker_save,
+            oci_layout: images.oci_layout,
+            docker_save: images.docker_save,
             docker_save_both: images.docker_save_both,
             _dir: dir,
         }
@@ -275,7 +275,11 @@ fn e2e_both_metadata_files_prefers_index_json() {
 
     let squashfs = convert_squashfs(&fx.docker_save_both, work.path(), "both");
     let reference = umoci_unpack(&fx.oci_layout, "latest", work.path(), "both-ref");
-    verify_clean(&squashfs, &reference, "docker-save-both (index.json preferred)");
+    verify_clean(
+        &squashfs,
+        &reference,
+        "docker-save-both (index.json preferred)",
+    );
 }
 
 /// Verify that the squashfs root directory has sane permissions (0755) and is
@@ -302,7 +306,7 @@ fn e2e_root_directory_permissions() {
 
     // Fields are: <mode> <user>/<group> <size> <date> <time> <path>
     let mut fields = root_line.split_whitespace();
-    let mode  = fields.next().unwrap_or("");
+    let mode = fields.next().unwrap_or("");
     let owner = fields.next().unwrap_or("");
 
     assert_eq!(
@@ -327,7 +331,12 @@ fn e2e_overlay_semantics_verified() {
     // as a distinct test with a distinct label so failures here are
     // unambiguously about overlay correctness rather than metadata parsing.
     let squashfs = convert_squashfs(&fx.oci_layout, work.path(), "overlay-semantics");
-    let reference = umoci_unpack(&fx.oci_layout, "latest", work.path(), "overlay-semantics-ref");
+    let reference = umoci_unpack(
+        &fx.oci_layout,
+        "latest",
+        work.path(),
+        "overlay-semantics-ref",
+    );
     verify_clean(&squashfs, &reference, "overlay semantics");
 }
 
@@ -353,15 +362,36 @@ fn e2e_convert_tar_overlay_semantics() {
     };
 
     // Files that must be present after overlay merge.
-    assert!(paths.contains("data/hello.txt"),        "data/hello.txt must be present");
-    assert!(paths.contains("data/layer1.txt"),        "data/layer1.txt must be present");
-    assert!(paths.contains("data/overwrite-me.txt"),  "data/overwrite-me.txt must be present");
-    assert!(paths.contains("opaque-dir/new.txt"),     "opaque-dir/new.txt must be present");
-    assert!(paths.contains("hardlinks/source.txt"),   "hardlinks/source.txt must be present");
+    assert!(
+        paths.contains("data/hello.txt"),
+        "data/hello.txt must be present"
+    );
+    assert!(
+        paths.contains("data/layer1.txt"),
+        "data/layer1.txt must be present"
+    );
+    assert!(
+        paths.contains("data/overwrite-me.txt"),
+        "data/overwrite-me.txt must be present"
+    );
+    assert!(
+        paths.contains("opaque-dir/new.txt"),
+        "opaque-dir/new.txt must be present"
+    );
+    assert!(
+        paths.contains("hardlinks/source.txt"),
+        "hardlinks/source.txt must be present"
+    );
 
     // Files that must be absent after whiteout / opaque-whiteout.
-    assert!(!paths.contains("data/whiteout-me.txt"), "data/whiteout-me.txt must be absent (whiteout)");
-    assert!(!paths.contains("opaque-dir/old.txt"),   "opaque-dir/old.txt must be absent (opaque whiteout)");
+    assert!(
+        !paths.contains("data/whiteout-me.txt"),
+        "data/whiteout-me.txt must be absent (whiteout)"
+    );
+    assert!(
+        !paths.contains("opaque-dir/old.txt"),
+        "opaque-dir/old.txt must be absent (opaque whiteout)"
+    );
 }
 
 /// Convert OCI → directory and verify overlay semantics by inspecting the
@@ -394,6 +424,12 @@ fn e2e_convert_dir_overlay_semantics() {
     );
 
     // Files that must be absent after whiteout / opaque-whiteout.
-    assert!(!dir.join("data/whiteout-me.txt").exists(), "data/whiteout-me.txt must be absent");
-    assert!(!dir.join("opaque-dir/old.txt").exists(),   "opaque-dir/old.txt must be absent");
+    assert!(
+        !dir.join("data/whiteout-me.txt").exists(),
+        "data/whiteout-me.txt must be absent"
+    );
+    assert!(
+        !dir.join("opaque-dir/old.txt").exists(),
+        "opaque-dir/old.txt must be absent"
+    );
 }
