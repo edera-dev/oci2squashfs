@@ -110,6 +110,9 @@ pub fn resolve_layers(image_dir: &Path, manifest: &OciManifest) -> Result<Vec<La
                 // Docker save: relative path like "abc123.../layer.tar"
                 image_dir.join(&desc.digest)
             };
+            // Some layouts store each blob as <hash>/<manifest-order>
+            // rather than as a flat file named <hash>.
+            let path = if path.is_dir() { path.join(i.to_string()) } else { path };
             if !path.exists() {
                 bail!("layer blob not found: {}", path.display());
             }
