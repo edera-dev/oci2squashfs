@@ -1,46 +1,10 @@
-# oci_squashfs
+# oci2squashfs
 
 A Rust library and CLI tool for converting OCI container images directly into
 squashfs filesystem images, without extracting layer contents to disk.
 
 ---
-
-## Background: how squashfs images were built before
-
-The previous approach (`protect-daemon`, `assemble.rs` + `vfs.rs` +
-`backend.rs`) worked in two distinct phases:
-
-**Phase 1 — Extract and build VFS.** Each layer tarball was decompressed and
-its entries extracted to a temporary directory on disk, one file per entry.
-A `VfsTree` was built in parallel: an in-memory tree of `VfsNode`s, each
-holding the original `CanonicalTarHeader` (USTAR + PAX extensions) and a
-pointer to the corresponding on-disk file. Whiteouts were applied to the VFS
-as each layer was processed in manifest order, removing nodes (and their
-backing files) from the tree. The `BatchedExtractor` optimised this somewhat
-by buffering small files in memory and flushing to disk in batches, but the
-end result was still every surviving file written to a temporary location on
-disk.
-
-**Phase 2 — Stream VFS to packer.** Once the VFS was fully assembled,
-`VfsTree::write_to_tar` walked the tree and streamed a tar to the packer's
-stdin — reading each file back off disk, pairing it with its in-memory
-header, and writing the combined entry to `mksquashfs` (or `mkfs.erofs`).
-
-This approach has a few significant costs:
-
-- **Every file is written to disk twice.** First during extraction (phase 1),
-  then read back during packing (phase 2). For a large image this means
-  gigabytes of intermediate I/O that produces no lasting output.
-- **Disk space proportional to image size.** The temporary directory must
-  hold the fully extracted, merged filesystem for the duration of the pack
-  step, requiring as much free space as the uncompressed image contents.
-- **Extraction and packing are strictly sequential.** The packer cannot start
-  until all layers are fully extracted and the VFS is complete, so there is
-  no pipeline parallelism between decompression and compression.
-
----
-
-## What this implementation does instead
+## What this implementation does
 
 This tool processes the OCI image's layer tarballs directly, merges them
 using an explicit in-memory overlay algorithm, and streams the result
@@ -71,7 +35,7 @@ in layer order. At no point is the full merged tar materialised in memory
 or on disk — entries stream from the layer blobs directly into
 `mksquashfs`'s stdin pipe.
 
-### Why this is better
+### Goals
 
 - **No disk extraction.** Layer contents flow from the compressed blob
   directly to `mksquashfs` via a pipe. The temporary directory full of
@@ -144,7 +108,6 @@ the link is silently dropped.
 ## Project structure
 
 ```
-oci_squashfs/               # Library crate — all reusable logic
   src/
     lib.rs                  # Public async convert() entry point
     canonical.rs            # CanonicalTarHeader: USTAR header + PAX extensions
@@ -159,9 +122,7 @@ oci_squashfs/               # Library crate — all reusable logic
       mod.rs                # Shared test helpers: LayerBuilder, blob(), merge(), etc.
     integration.rs          # Synthetic tests for the merge pipeline
     regression.rs           # Per-bug regression tests from production verify runs
-
-oci_squashfs_cli/           # Binary crate — CLI only, depends on the library
-  src/
+  bin/                      # Binary crate — CLI only, depends on the library
     main.rs                 # `oci2squashfs convert` and `oci2squashfs verify`
 ```
 

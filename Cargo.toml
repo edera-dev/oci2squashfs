@@ -25,8 +25,8 @@ clap          = { version = "4", features = ["derive"] }
 tokio = { version = "1", features = ["full"] }
 
 [lib]
-name = "oci_squashfs"
+name = "oci2squashfs"
 
 [[bin]]
-name = "oci_squashfs_cli"
+name = "oci2squashfs_cli"
 path = "bin/main.rs"
