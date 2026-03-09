@@ -11,6 +11,18 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Convert an OCI image directory to a erofs image.
+    ConvertErofs {
+        /// Path to the extracted OCI image directory.
+        #[arg(short, long)]
+        image: PathBuf,
+        /// Output erofs file path.
+        #[arg(short, long)]
+        output: PathBuf,
+        /// Path to the mkfs.erofs binary. If None, will attempt to resolve from PATH
+        #[arg(long)]
+        mkfs_erofs: Option<PathBuf>,
+    },
     /// Convert an OCI image directory to a squashfs image.
     ConvertSquashfs {
         /// Path to the extracted OCI image directory.
@@ -58,7 +70,12 @@ async fn main() -> Result<()> {
     match cli.command {
         Commands::ConvertSquashfs { image, output, mksquashfs } => {
             println!("Converting {} → {}", image.display(), output.display());
-            oci2squashfs::convert_mksquashfs(&image, &output, mksquashfs.as_deref()).await?;
+            oci2squashfs::convert_squashfs(&image, &output, mksquashfs.as_deref()).await?;
+            println!("Done: {}", output.display());
+        }
+        Commands::ConvertErofs { image, output, mkfs_erofs } => {
+            println!("Converting {} → {}", image.display(), output.display());
+            oci2squashfs::convert_erofs(&image, &output, mkfs_erofs.as_deref()).await?;
             println!("Done: {}", output.display());
         }
         Commands::ConvertTar { image, output } => {
