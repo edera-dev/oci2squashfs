@@ -45,6 +45,12 @@ pub fn merge_layers_into<W: Write>(mut layers: Vec<LayerBlob>, sink: W) -> Resul
             let raw_path = entry.path().context("entry path")?.into_owned();
             let path = normalize_path(&raw_path);
 
+            // Skip the root directory entry (`./` or `/`), which normalizes to
+            // an empty path and is meaningless in a merged tar.
+            if path.as_os_str().is_empty() {
+                continue;
+            }
+
             // 1. Check whiteout suppression.
             if whiteout.is_suppressed(&path, blob.index) {
                 continue;

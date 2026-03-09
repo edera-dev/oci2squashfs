@@ -2,6 +2,7 @@
 //! Each test is named after the bug it guards against and has a comment
 //! explaining the root cause and how it was discovered.
 
+use std::fs;
 use std::io::Cursor;
 use tar::{Builder, EntryType, Header};
 
@@ -159,6 +160,70 @@ fn regress_absolute_hardlink_target_normalized() {
         paths.iter().any(|p| p == "usr/share/bar"),
         "hard link with absolute PAX linkpath must not be dropped after normalization"
     );
+}
+
+/// resolve_layers` constructed layer blob paths as `<image_dir>/blobs/sha256/<hash>` and
+/// expected a plain file there. The some OCI downloaders instead store each blob as a directory
+/// `<image_dir>/blobs/sha256/<hash>/` containing a file named after the layer's manifest order
+/// index (e.g. `0` for the first layer). This caused `File::open` to fail with EISDIR.
+///
+/// The manifest-order index is used as the filename to handle the edge case of a manifest that
+/// lists the same digest more than once.
+#[test]
+fn regress_layer_blob_stored_as_directory_with_order_index() {
+    let dir = tempfile::tempdir().unwrap();
+    let blobs_sha256 = dir.path().join("blobs").join("sha256");
+    fs::create_dir_all(&blobs_sha256).unwrap();
+
+    // Two layers, each stored as <hash>/<manifest-order>.
+    let digest0 = "c".repeat(64);
+    let digest1 = "d".repeat(64);
+    let dir0 = blobs_sha256.join(&digest0);
+    let dir1 = blobs_sha256.join(&digest1);
+    fs::create_dir_all(&dir0).unwrap();
+    fs::create_dir_all(&dir1).unwrap();
+    fs::write(dir0.join("0"), b"layer0-content").unwrap();
+    fs::write(dir1.join("1"), b"layer1-content").unwrap();
+
+    // Write the manifest blob that the index points to.
+    let manifest_digest = "e".repeat(64);
+    let manifest_json = serde_json::json!({
+        "schemaVersion": 2,
+        "layers": [
+            {
+                "mediaType": "application/vnd.oci.image.layer.v1.tar",
+                "digest": format!("sha256:{digest0}"),
+                "size": 14
+            },
+            {
+                "mediaType": "application/vnd.oci.image.layer.v1.tar",
+                "digest": format!("sha256:{digest1}"),
+                "size": 14
+            }
+        ]
+    });
+    fs::write(blobs_sha256.join(&manifest_digest), manifest_json.to_string()).unwrap();
+
+    // Write index.json as a proper OCI image index pointing at the manifest blob.
+    let index_json = serde_json::json!({
+        "schemaVersion": 2,
+        "manifests": [
+            {
+                "mediaType": "application/vnd.oci.image.manifest.v1+json",
+                "digest": format!("sha256:{manifest_digest}"),
+                "size": 0
+            }
+        ]
+    });
+    fs::write(dir.path().join("index.json"), index_json.to_string()).unwrap();
+
+    let manifest = oci2squashfs::image::load_manifest(dir.path()).unwrap();
+    let layers = oci2squashfs::image::resolve_layers(dir.path(), &manifest)
+        .expect("resolve_layers must find blobs stored as <hash>/<manifest-order> directories");
+
+    assert_eq!(layers.len(), 2);
+    assert_eq!(layers[0].path, dir0.join("0"));
+    assert_eq!(layers[1].path, dir1.join("1"));
 }
 
 /// Bug: a simple whiteout (`.wh.<name>`) on a directory was only suppressing the directory entry
