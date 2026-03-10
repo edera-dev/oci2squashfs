@@ -1,6 +1,6 @@
 //! Spawn mksquashfs and stream the merged tar directly into its stdin.
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use std::{
     path::Path,
     process::{Command, Stdio},
@@ -10,7 +10,11 @@ use crate::{image::LayerBlob, overlay::merge_layers_into};
 
 /// Convert `layers` into a squashfs image at `output` by streaming a merged
 /// tar directly into mksquashfs's stdin. No full tar buffer is held in memory.
-pub fn write_squashfs(layers: Vec<LayerBlob>, output: &Path, squashfs_binpath: Option<&Path>) -> Result<()> {
+pub fn write_squashfs(
+    layers: Vec<LayerBlob>,
+    output: &Path,
+    squashfs_binpath: Option<&Path>,
+) -> Result<()> {
     if output.exists() {
         std::fs::remove_file(output)
             .with_context(|| format!("removing existing {}", output.display()))?;
@@ -35,9 +39,12 @@ pub fn write_squashfs(layers: Vec<LayerBlob>, output: &Path, squashfs_binpath: O
         // of what the invoking user's identity is.  Without these, mksquashfs
         // uses the invoking user's uid/gid and 0777 for intermediate
         // directories that have no explicit tar entry.
-        "-default-mode", "0755",
-        "-default-uid", "0",
-        "-default-gid", "0",
+        "-default-mode",
+        "0755",
+        "-default-uid",
+        "0",
+        "-default-gid",
+        "0",
     ])
     .stdin(Stdio::piped())
     .stdout(Stdio::piped())

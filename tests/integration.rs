@@ -5,7 +5,7 @@
 #[path = "helpers/mod.rs"]
 mod helpers;
 use helpers::{
-    blob, hardlink_target_in_tar, merge, paths_in_tar, symlink_target_in_tar, LayerBuilder,
+    LayerBuilder, blob, hardlink_target_in_tar, merge, paths_in_tar, symlink_target_in_tar,
 };
 
 // ─── Tests ───────────────────────────────────────────────────────────────────

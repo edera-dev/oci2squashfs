@@ -8,7 +8,7 @@ use tar::{Builder, EntryType, Header};
 
 #[path = "helpers/mod.rs"]
 mod helpers;
-use helpers::{blob, merge, paths_in_tar, LayerBuilder};
+use helpers::{LayerBuilder, blob, merge, paths_in_tar};
 // regression.rs also uses:
 use helpers::hardlink_target_in_tar;
 
@@ -202,7 +202,11 @@ fn regress_layer_blob_stored_as_directory_with_order_index() {
             }
         ]
     });
-    fs::write(blobs_sha256.join(&manifest_digest), manifest_json.to_string()).unwrap();
+    fs::write(
+        blobs_sha256.join(&manifest_digest),
+        manifest_json.to_string(),
+    )
+    .unwrap();
 
     // Write index.json as a proper OCI image index pointing at the manifest blob.
     let index_json = serde_json::json!({

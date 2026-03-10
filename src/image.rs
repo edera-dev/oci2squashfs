@@ -1,6 +1,6 @@
 //! Parse OCI index.json + manifest, resolve layer blobs.
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::io::Read;
@@ -115,7 +115,10 @@ pub fn load_manifest(image_dir: &Path) -> Result<OciManifest> {
                     // No LayerSources entry — will be resolved by magic bytes
                     // in resolve_layers.
                     .unwrap_or_default();
-                OciDescriptor { digest: l, media_type }
+                OciDescriptor {
+                    digest: l,
+                    media_type,
+                }
             })
             .collect();
 
@@ -145,7 +148,11 @@ pub fn resolve_layers(image_dir: &Path, manifest: &OciManifest) -> Result<Vec<La
             };
             // Some layouts store each blob as <hash>/<manifest-order>
             // rather than as a flat file named <hash>.
-            let path = if path.is_dir() { path.join(i.to_string()) } else { path };
+            let path = if path.is_dir() {
+                path.join(i.to_string())
+            } else {
+                path
+            };
             if !path.exists() {
                 bail!("layer blob not found: {}", path.display());
             }
@@ -158,7 +165,11 @@ pub fn resolve_layers(image_dir: &Path, manifest: &OciManifest) -> Result<Vec<La
             } else {
                 desc.media_type.clone()
             };
-            Ok(LayerBlob { path, media_type, index: i })
+            Ok(LayerBlob {
+                path,
+                media_type,
+                index: i,
+            })
         })
         .collect()
 }
