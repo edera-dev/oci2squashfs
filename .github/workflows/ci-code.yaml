@@ -37,8 +37,16 @@ jobs:
     runs-on: "${{ matrix.platform.on }}"
     env:
       TARGET_ARCH: "${{ matrix.platform.arch }}"
-    name: 'Full build linux-${{ matrix.platform.arch }}'
+    name: 'Full build and test linux-${{ matrix.platform.arch }}'
     steps:
+      - name: install test dependencies
+        run: |
+          sudo -E bash -c '
+            export DEBIAN_FRONTEND=noninteractive
+            apt update
+            apt -y install squashfs-tools squashfuse umoci
+          '
+
       - name: harden runner
         uses: step-security/harden-runner@5ef0c079ce82195b2a36a210272d6b661572d83e # v2.14.2
         with:
@@ -52,6 +60,9 @@ jobs:
 
       - name: cargo build
         run: cargo build
+
+      - name: cargo test
+        run: cargo test --features e2e
 
   clippy:
     runs-on: ubuntu-latest
