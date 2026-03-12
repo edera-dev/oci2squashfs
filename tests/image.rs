@@ -620,3 +620,106 @@ fn resolve_layers_paths_point_to_existing_files() {
         );
     }
 }
+
+// ── oci-spec compatibility ────────────────────────────────────────────────────
+//
+// These tests verify that index.json files produced by the `oci-spec` crate
+// (as used in production to assemble the download directory) are parsed
+// correctly by load_manifest + resolve_layers.  A field name mismatch between
+// oci-spec's serde output and our OciIndex/OciDescriptor structs would cause a
+// silent parse failure or a missing-field error.
+
+#[cfg(test)]
+mod oci_spec_compat {
+    use super::*;
+    use oci_spec::image::{
+        DescriptorBuilder, ImageIndexBuilder, ImageManifestBuilder, MediaType, Sha256Digest,
+    };
+    use std::str::FromStr;
+
+    /// Reproduce the exact index.json assembly used in production and verify
+    /// that load_manifest parses it and resolve_layers finds the layer blob.
+    #[test]
+    fn load_manifest_parses_oci_spec_generated_index() {
+        let dir = TempDir::new().unwrap();
+        let blobs = dir.path().join("blobs").join("sha256");
+        fs::create_dir_all(&blobs).unwrap();
+
+        // Write a minimal layer blob.
+        let layer_data = [0x1f_u8, 0x8b, 0x00, 0x00]; // gzip magic
+        let layer_digest_hex = sha256_hex(&layer_data);
+        fs::write(blobs.join(&layer_digest_hex), &layer_data).unwrap();
+
+        // Build a manifest blob using oci-spec, mirroring what the downloader does.
+        let layer_desc = DescriptorBuilder::default()
+            .media_type(MediaType::ImageLayerGzip)
+            .size(layer_data.len() as u64)
+            .digest(Sha256Digest::from_str(&layer_digest_hex).unwrap())
+            .build()
+            .unwrap();
+
+        let manifest = ImageManifestBuilder::default()
+            .schema_version(2u32)
+            .media_type(MediaType::ImageManifest)
+            .layers(vec![layer_desc])
+            .config(
+                DescriptorBuilder::default()
+                    .media_type(MediaType::ImageConfig)
+                    .size(2u64)
+                    .digest(Sha256Digest::from_str(&sha256_hex(b"{}")).unwrap())
+                    .build()
+                    .unwrap(),
+            )
+            .build()
+            .unwrap();
+
+        let manifest_bytes = serde_json::to_vec(&manifest).unwrap();
+        let manifest_digest_hex = sha256_hex(&manifest_bytes);
+        fs::write(blobs.join(&manifest_digest_hex), &manifest_bytes).unwrap();
+
+        // Write a config blob so resolve_layers doesn't trip over a missing file.
+        fs::write(blobs.join(sha256_hex(b"{}")), b"{}").unwrap();
+
+        // Build index.json exactly as the production downloader does.
+        let index_descriptor = DescriptorBuilder::default()
+            .media_type(MediaType::ImageManifest)
+            .size(manifest_bytes.len() as u64)
+            .digest(Sha256Digest::from_str(&manifest_digest_hex).unwrap())
+            .build()
+            .unwrap();
+
+        let index = ImageIndexBuilder::default()
+            .schema_version(2u32)
+            .media_type(MediaType::ImageIndex)
+            .manifests(vec![index_descriptor])
+            .build()
+            .unwrap();
+
+        fs::write(
+            dir.path().join("index.json"),
+            serde_json::to_string(&index).unwrap(),
+        )
+        .unwrap();
+
+        // This must parse without error.
+        let manifest = load_manifest(dir.path())
+            .expect("load_manifest must parse an oci-spec-generated index.json");
+
+        assert_eq!(manifest.layers.len(), 1, "must find exactly one layer");
+        assert!(
+            manifest.layers[0].media_type.ends_with("+gzip"),
+            "layer media type must be preserved; got {:?}",
+            manifest.layers[0].media_type
+        );
+
+        // resolve_layers must also succeed and produce a blob pointing at the
+        // correct file.
+        let layers = resolve_layers(dir.path(), &manifest).expect("resolve_layers must succeed");
+        assert_eq!(layers.len(), 1);
+        assert!(
+            layers[0].path.exists(),
+            "resolved layer path must exist on disk"
+        );
+        assert_eq!(layers[0].index, 0);
+    }
+}

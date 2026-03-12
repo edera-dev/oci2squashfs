@@ -1,5 +1,4 @@
 //! CanonicalTarHeader: a tar Header paired with its PAX extensions.
-//! Ported from production vfs.rs — lets the `tar` crate own PAX serialization.
 
 use anyhow::{Result, anyhow};
 use std::borrow::Cow;

@@ -1,4 +1,4 @@
-//! Verification helper: mount squashfs and diff against a reference directory.
+//! Verification: diff a generated image against a reference directory.
 
 use anyhow::{Context, Result};
 use sha2::{Digest, Sha256};
@@ -11,6 +11,8 @@ use std::{
     process::Command,
 };
 use tempfile::TempDir;
+
+use crate::ImageSpec;
 
 // ─── RAII mount guard ─────────────────────────────────────────────────────────
 
@@ -58,11 +60,22 @@ impl Drop for SquashMount {
 
 // ─── Public API ───────────────────────────────────────────────────────────────
 
+/// The result of comparing a generated image against a reference directory.
 #[derive(Debug)]
 pub struct VerifyReport {
-    pub only_in_squashfs: Vec<PathBuf>,
+    /// Paths present in the generated image but absent from the reference.
+    pub only_in_generated: Vec<PathBuf>,
+    /// Paths present in the reference but absent from the generated image.
     pub only_in_reference: Vec<PathBuf>,
     pub differences: Vec<FileDiff>,
+}
+
+impl VerifyReport {
+    pub fn is_clean(&self) -> bool {
+        self.only_in_generated.is_empty()
+            && self.only_in_reference.is_empty()
+            && self.differences.is_empty()
+    }
 }
 
 #[derive(Debug)]
@@ -71,28 +84,50 @@ pub struct FileDiff {
     pub detail: String,
 }
 
-pub fn verify(squashfs: &Path, reference: &Path) -> Result<VerifyReport> {
-    let mount = SquashMount::new(squashfs)?;
+/// Verify a generated image described by `spec` against a `reference`
+/// directory.
+///
+/// - `ImageSpec::Squashfs` — mounts via squashfuse, diffs the mount against
+///   `reference`, then unmounts.
+/// - `ImageSpec::Dir` — diffs the directory directly against `reference`.
+/// - `ImageSpec::Tar` — returns `Err`: tar verification is not supported
+///   directly. Extract to a directory first with `convert-dir`, then verify.
+pub fn verify(spec: ImageSpec, reference: &Path) -> Result<VerifyReport> {
+    match spec {
+        ImageSpec::Squashfs { path, .. } => {
+            let mount = SquashMount::new(&path)?;
+            verify_dirs(mount.path(), reference)
+        }
+        ImageSpec::Dir { path } => verify_dirs(&path, reference),
+        ImageSpec::Tar { .. } => anyhow::bail!(
+            "tar verification is not supported directly; \
+             extract to a directory with convert-dir first, then use --dir"
+        ),
+    }
+}
 
-    let squashfs_tree = walk_tree(mount.path()).context("walking squashfs mount")?;
+/// Compare two directories and return a [`VerifyReport`] describing any
+/// differences. This is the core primitive used by [`verify`].
+pub(crate) fn verify_dirs(generated: &Path, reference: &Path) -> Result<VerifyReport> {
+    let generated_tree = walk_tree(generated).context("walking generated directory")?;
     let reference_tree = walk_tree(reference).context("walking reference directory")?;
 
     let mut report = VerifyReport {
-        only_in_squashfs: Vec::new(),
+        only_in_generated: Vec::new(),
         only_in_reference: Vec::new(),
         differences: Vec::new(),
     };
 
-    for (rel, sq_info) in &squashfs_tree {
+    for (rel, gen_info) in &generated_tree {
         match reference_tree.get(rel) {
-            None => report.only_in_squashfs.push(rel.clone()),
+            None => report.only_in_generated.push(rel.clone()),
             Some(ref_info) => report
                 .differences
-                .extend(compare_entries(rel, sq_info, ref_info)),
+                .extend(compare_entries(rel, gen_info, ref_info)),
         }
     }
     for rel in reference_tree.keys() {
-        if !squashfs_tree.contains_key(rel) {
+        if !generated_tree.contains_key(rel) {
             report.only_in_reference.push(rel.clone());
         }
     }
@@ -191,7 +226,7 @@ fn hash_file(path: &Path) -> Result<String> {
 
 // ─── Comparison ───────────────────────────────────────────────────────────────
 
-fn compare_entries(rel: &Path, sq: &EntryInfo, rf: &EntryInfo) -> Vec<FileDiff> {
+fn compare_entries(rel: &Path, generated: &EntryInfo, reference: &EntryInfo) -> Vec<FileDiff> {
     let mut diffs = Vec::new();
     macro_rules! diff {
         ($msg:expr) => {
@@ -202,37 +237,46 @@ fn compare_entries(rel: &Path, sq: &EntryInfo, rf: &EntryInfo) -> Vec<FileDiff> 
         };
     }
 
-    if sq.kind != rf.kind {
+    if generated.kind != reference.kind {
         diff!(format!(
-            "type mismatch: squashfs={:?} ref={:?}",
-            sq.kind, rf.kind
+            "type mismatch: generated={:?} reference={:?}",
+            generated.kind, reference.kind
         ));
         return diffs;
     }
-    if sq.mode != rf.mode {
+    if generated.mode != reference.mode {
         diff!(format!(
-            "mode: squashfs={:04o} ref={:04o}",
-            sq.mode, rf.mode
+            "mode: generated={:04o} reference={:04o}",
+            generated.mode, reference.mode
         ));
     }
-    if sq.uid != rf.uid {
-        diff!(format!("uid: squashfs={} ref={}", sq.uid, rf.uid));
-    }
-    if sq.gid != rf.gid {
-        diff!(format!("gid: squashfs={} ref={}", sq.gid, rf.gid));
-    }
-    if sq.symlink_target != rf.symlink_target {
+    if generated.uid != reference.uid {
         diff!(format!(
-            "symlink target: squashfs={:?} ref={:?}",
-            sq.symlink_target, rf.symlink_target
+            "uid: generated={} reference={}",
+            generated.uid, reference.uid
         ));
     }
-    if sq.kind == EntryKind::File {
-        if sq.size != rf.size {
-            diff!(format!("size: squashfs={} ref={}", sq.size, rf.size));
+    if generated.gid != reference.gid {
+        diff!(format!(
+            "gid: generated={} reference={}",
+            generated.gid, reference.gid
+        ));
+    }
+    if generated.symlink_target != reference.symlink_target {
+        diff!(format!(
+            "symlink target: generated={:?} reference={:?}",
+            generated.symlink_target, reference.symlink_target
+        ));
+    }
+    if generated.kind == EntryKind::File {
+        if generated.size != reference.size {
+            diff!(format!(
+                "size: generated={} reference={}",
+                generated.size, reference.size
+            ));
         }
-        if sq.sha256 != rf.sha256 {
-            diff!(format!("sha256 mismatch"));
+        if generated.sha256 != reference.sha256 {
+            diff!("sha256 mismatch".into());
         }
     }
     diffs

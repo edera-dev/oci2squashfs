@@ -1,6 +1,8 @@
-use anyhow::Result;
+use anyhow::{Result, bail};
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
+
+use oci2squashfs::ImageSpec;
 
 #[derive(Parser)]
 #[command(name = "oci2squashfs", about = "Convert an OCI image to squashfs")]
@@ -19,7 +21,7 @@ enum Commands {
         /// Output squashfs file path.
         #[arg(short, long)]
         output: PathBuf,
-        /// Path to the mksquashfs binary. If None, will attempt to resolve from PATH
+        /// Path to the mksquashfs binary. If not set, resolved from PATH.
         #[arg(long)]
         mksquashfs: Option<PathBuf>,
     },
@@ -41,12 +43,20 @@ enum Commands {
         #[arg(short, long)]
         output: PathBuf,
     },
-    /// Verify a squashfs image against a reference directory.
+    /// Verify a generated image against a reference directory.
+    ///
+    /// Exactly one of --squashfs or --dir must be supplied as the generated
+    /// image source. The reference is always a plain directory (e.g. a
+    /// containerd-unpacked rootfs or a docker export extracted with tar -x -p).
     Verify {
-        /// Path to the .squashfs file.
-        #[arg(short, long)]
-        squashfs: PathBuf,
-        /// Path to the reference directory (e.g. containerd-unpacked rootfs).
+        /// Path to a generated .squashfs file to verify.
+        /// Mounted read-only via squashfuse for the duration of the comparison.
+        #[arg(long, conflicts_with = "dir")]
+        squashfs: Option<PathBuf>,
+        /// Path to a generated directory to verify.
+        #[arg(long, conflicts_with = "squashfs")]
+        dir: Option<PathBuf>,
+        /// Path to the reference directory.
         #[arg(short, long)]
         reference: PathBuf,
     },
@@ -77,23 +87,30 @@ async fn main() -> Result<()> {
         }
         Commands::Verify {
             squashfs,
+            dir,
             reference,
         } => {
-            let report = tokio::task::spawn_blocking(move || {
-                oci2squashfs::verify::verify(&squashfs, &reference)
-            })
-            .await??;
+            let spec = match (squashfs, dir) {
+                (Some(p), None) => ImageSpec::Squashfs {
+                    path: p,
+                    binpath: None,
+                },
+                (None, Some(p)) => ImageSpec::Dir { path: p },
+                (None, None) => bail!("one of --squashfs or --dir is required"),
+                (Some(_), Some(_)) => unreachable!("clap conflicts_with prevents this"),
+            };
 
-            if report.only_in_squashfs.is_empty()
-                && report.only_in_reference.is_empty()
-                && report.differences.is_empty()
-            {
+            let report =
+                tokio::task::spawn_blocking(move || oci2squashfs::verify::verify(spec, &reference))
+                    .await??;
+
+            if report.is_clean() {
                 println!("✓ No differences found.");
                 return Ok(());
             }
 
-            for p in &report.only_in_squashfs {
-                println!("+ squashfs only: {}", p.display());
+            for p in &report.only_in_generated {
+                println!("+ generated only: {}", p.display());
             }
             for p in &report.only_in_reference {
                 println!("- reference only: {}", p.display());

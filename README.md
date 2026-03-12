@@ -1,14 +1,17 @@
 # oci2squashfs
 
 A Rust library and CLI tool for converting OCI container images directly into
-squashfs filesystem images, without extracting layer contents to disk.
+squashfs filesystem images, plain tar archives, or extracted directories —
+without extracting layer contents to intermediate disk storage.
 
 ---
+
 ## What this implementation does
 
-This tool processes the OCI image's layer tarballs directly, merges them
-using an explicit in-memory overlay algorithm, and streams the result
-straight into `mksquashfs`'s stdin. Nothing is extracted to disk.
+OCI images are a stack of compressed tar archives (layers). This tool processes
+those layer tarballs directly, merges them using an explicit in-memory overlay
+algorithm, and streams the result to the chosen output sink. Nothing is
+extracted to a temporary directory.
 
 The pipeline for a single image conversion is:
 
@@ -19,45 +22,39 @@ layer blobs (gzip/zstd/etc)
         ▼
   tar entry stream  ─── overlay merge ───►  merged tar stream
   (per layer)            (in memory)                │
-                                                    │  piped to stdin
-                                                    ▼
-                                               mksquashfs
-                                                    │
-                                                    ▼
-                                            output .squashfs
+                                                    ├─► mksquashfs stdin → .squashfs
+                                                    ├─► file             → .tar
+                                                    └─► tar::unpack      → directory
 ```
 
-The overlay merge processes layers in reverse order (newest first) so that
+The overlay merge processes layers in **reverse order** (newest first) so that
 the first time a path is seen is always the winning version. Whiteouts are
-tracked in a trie structure and checked as older layers are processed.
-Hard links are deferred until all content has been emitted, then replayed
-in layer order. At no point is the full merged tar materialised in memory
-or on disk — entries stream from the layer blobs directly into
-`mksquashfs`'s stdin pipe.
+tracked in a trie structure and checked as older layers are processed. Hard
+links whose targets were suppressed by a whiteout are promoted to standalone
+regular files. At no point is the full merged tar materialised in memory or
+on disk — entries stream from the layer blobs directly into the output sink.
 
 ### Goals
 
-- **No disk extraction.** Layer contents flow from the compressed blob
-  directly to `mksquashfs` via a pipe. The temporary directory full of
-  extracted files is eliminated entirely.
-- **No intermediate disk space requirement.** Previously, free disk space
-  proportional to the uncompressed image size was required to hold the
-  extracted VFS backing store. Now only the compressed layer blobs need
-  to be present.
-- **Packing starts immediately.** Because the merged tar is streamed
-  directly into `mksquashfs`, compression begins as soon as the first
-  entry is emitted from the first layer. There is no waiting for all
-  layers to be fully extracted before packing can start.
-- **Whiteout and overlay logic is explicit and tested.** Rather than being
-  a side effect of how the VFS tree was mutated during extraction, the
-  overlay semantics are implemented as a distinct, self-contained algorithm
-  with its own test suite, making the behaviour easier to reason about and
-  verify.
-- **Correct PAX header round-tripping.** Long paths, long symlink targets,
-  and long hard link targets (all exceeding USTAR's 100-byte field limits)
-  are preserved via PAX extended headers throughout the pipeline. The
-  previous approach had a latent bug here where hard link targets over 100
-  bytes were silently truncated, causing links to be dropped.
+- **No disk extraction.** Layer contents flow from the compressed blob directly
+  to the output sink. No temporary directory of extracted files is required.
+- **Minimal intermediate disk space.** Only the compressed layer blobs need to
+  be present. The output is written directly to its final destination.
+- **Output starts immediately.** Streaming begins as soon as the first entry is
+  emitted from the first (newest) layer. There is no waiting for all layers to
+  be processed before output can start.
+- **Download-parallel processing.** The streaming API accepts layers in any
+  arrival order as downloads complete. The merge engine resequences them
+  internally and processes each layer as soon as its turn arrives, keeping the
+  output sink busy while remaining layers are still in flight.
+- **Explicit, tested overlay semantics.** Whiteout handling and overlay
+  application are implemented as a self-contained algorithm with their own test
+  suite, making the behaviour straightforward to reason about and verify.
+- **Correct PAX header round-tripping.** Long paths, long symlink targets, and
+  long hard link targets (all exceeding USTAR's 100-byte field limits) are
+  preserved via PAX extended headers throughout the pipeline. A prior
+  implementation had a latent bug where hard link targets over 100 bytes were
+  silently truncated and the links dropped.
 
 ---
 
@@ -77,7 +74,7 @@ A path trie. When a whiteout entry is encountered in a layer, it is recorded
 in the trie along with the index of the layer that declared it. Two kinds of
 whiteout are handled:
 
-- **Simple whiteout** (`.wh.<n>`): suppresses the specific named path
+- **Simple whiteout** (`.wh.<name>`): suppresses the specific named path
   from all older layers.
 - **Opaque whiteout** (`.wh..wh..opq`): suppresses all content under the
   parent directory from older layers, replacing it entirely with the newer
@@ -89,19 +86,118 @@ suppresses entries from layers with index < N.
 
 ### EmittedPathTracker
 
-A `HashSet<PathBuf>`. Once a path has been written to the output tar stream,
-it is recorded here. If the same path appears again in an older layer it is
-skipped — the newest version always wins.
+A `HashSet<PathBuf>`. Once a path has been written to the output stream, it is
+recorded here. If the same path appears again in an older layer it is skipped —
+the newest version always wins.
 
 ### HardLinkTracker
 
 Hard links cannot be emitted immediately because their targets may not have
-been emitted yet (the target could live in an older layer that hasn't been
-processed). Hard link entries are deferred into a `Vec`, then after all
-layers have been processed they are replayed in ascending layer order. Before
-emitting each link, the target path is verified against the emitted-path
-tracker; if the target was suppressed by a whiteout or never appeared at all,
-the link is silently dropped.
+been seen yet (the target could live in an older layer that hasn't been
+processed). Hard link entries are deferred and replayed in ascending layer
+order after all layers have been processed.
+
+Two cases are handled at replay time:
+
+- **Normal deferred hardlink**: the target path was emitted normally. The link
+  is emitted pointing at the target. If the target was suppressed by a whiteout
+  or never appeared at all, the link is dropped.
+- **Promoted hardlink**: the target path was suppressed by a higher-layer
+  whiteout, but the hardlink path itself is live. In this case the link is
+  *promoted* to a standalone regular file using the suppressed target's buffered
+  content. If multiple hardlinks share the same suppressed target, they form a
+  group: the oldest member is emitted as the regular file and the rest are
+  emitted as hardlinks to it, preserving inode-sharing semantics.
+
+---
+
+## Library API
+
+### `ImageSpec`
+
+`ImageSpec` is a direction-neutral description of an image's format, location,
+and any format-specific options. It is used both as a conversion output target
+and as a verification input source.
+
+```rust
+pub enum ImageSpec {
+    Squashfs { path: PathBuf, binpath: Option<PathBuf> },
+    Tar      { path: PathBuf },
+    Dir      { path: PathBuf },
+}
+```
+
+### Batch conversion
+
+```rust
+// Convert an OCI image directory to any supported output format.
+pub async fn convert(image_dir: &Path, spec: ImageSpec) -> Result<()>
+
+// Named convenience wrappers (call through to convert()).
+pub async fn convert_mksquashfs(image_dir, output, squashfs_binpath) -> Result<()>
+pub async fn convert_tar(image_dir, output_tar) -> Result<()>
+pub async fn convert_dir(image_dir, output_dir) -> Result<()>
+```
+
+### Streaming conversion
+
+For use when layers are being downloaded concurrently. Layers may be delivered
+in any order; the merge engine resequences them and processes each as soon as
+its turn arrives.
+
+```rust
+// Streaming convenience wrappers.
+pub async fn convert_mksquashfs_streaming(receiver, total_layers, output, binpath) -> Result<()>
+pub async fn convert_tar_streaming(receiver, total_layers, output_tar) -> Result<()>
+pub async fn convert_dir_streaming(receiver, total_layers, output_dir) -> Result<()>
+```
+
+#### `StreamingPacker`
+
+For finer-grained control — including per-layer progress events and the ability
+to signal download errors — use `StreamingPacker` directly:
+
+```rust
+// Construct and immediately begin processing. The output sink is opened and
+// (for squashfs) mksquashfs is spawned at construction time.
+let packer = StreamingPacker::new(layer_metas, spec, progress_tx);
+
+// Notify the packer as each layer blob finishes downloading.
+// May be called from any task in any order.
+packer.notify_layer_ready(index, path).await?;
+
+// Signal a download failure, causing the merge to abort.
+packer.notify_error(err).await;
+
+// Wait for the output to be finalised.
+packer.finish().await?;
+```
+
+`progress_tx`, if supplied, receives `PackerProgress::LayerStarted(i)` and
+`PackerProgress::LayerFinished(i)` events from the merge engine as each layer
+is processed. These events are emitted regardless of output format.
+
+### Verification
+
+```rust
+pub fn verify(spec: ImageSpec, reference: &Path) -> Result<VerifyReport>
+```
+
+Compares a generated image against a reference directory:
+
+- `ImageSpec::Squashfs` — mounts via `squashfuse`, diffs the mount against
+  `reference`, then unmounts.
+- `ImageSpec::Dir` — diffs the directory directly against `reference`.
+- `ImageSpec::Tar` — returns `Err`. Extract to a directory first with
+  `convert-dir`, then use `ImageSpec::Dir`.
+
+`VerifyReport` contains:
+- `only_in_generated` — paths present in the generated image but absent from
+  the reference
+- `only_in_reference` — paths present in the reference but absent from the
+  generated image
+- `differences` — per-file differences in type, mode, uid, gid, size, symlink
+  target, and SHA-256 content hash
 
 ---
 
@@ -109,21 +205,24 @@ the link is silently dropped.
 
 ```
 src/
-  lib.rs                  # Public async convert() entry point
-  canonical.rs            # CanonicalTarHeader: USTAR header + PAX extensions
-  image.rs                # Parse index.json / manifest.json, resolve layer blobs
-  layers.rs               # Open a layer blob and dispatch decompression
-  overlay.rs              # Core merge algorithm (merge_layers_into)
-  squashfs.rs             # Spawn mksquashfs, pipe merged tar into stdin
-  tracker.rs              # WhiteoutTracker, EmittedPathTracker, HardLinkTracker
-  verify.rs               # Mount squashfs via squashfuse, diff against reference
+  lib.rs          # ImageSpec, StreamingPacker, convert(), public async API
+  canonical.rs    # CanonicalTarHeader: USTAR header + PAX extensions
+  image.rs        # Parse index.json / manifest.json, resolve layer blobs
+  layers.rs       # Open a layer blob and dispatch decompression
+  overlay.rs      # Core merge algorithm (merge_layers_into_streaming)
+  squashfs.rs     # Spawn mksquashfs, pipe merged tar into stdin
+  tar.rs          # Write merged tar directly to a file
+  dir.rs          # Unpack merged tar directly into a directory
+  tracker.rs      # WhiteoutTracker, EmittedPathTracker, HardLinkTracker
+  verify.rs       # Diff a generated image against a reference directory
 tests/
   helpers/
-    mod.rs                # Shared test helpers: LayerBuilder, blob(), merge(), etc.
-  integration.rs          # Synthetic tests for the merge pipeline
-  regression.rs           # Per-bug regression tests from production verify runs
-bin/                      # Binary crate — CLI only, depends on the library
-  main.rs                 # `oci2squashfs_cli convert` and `oci2squashfs_cli verify`
+    mod.rs        # LayerBuilder, blob(), merge(), tar inspection helpers
+  integration.rs  # Synthetic tests for the merge pipeline
+  regression.rs   # Per-bug regression tests from production verify runs
+  streaming.rs    # Streaming merge and StreamingPacker tests
+bin/
+  main.rs         # CLI entry point
 ```
 
 ### Key design decisions
@@ -131,26 +230,25 @@ bin/                      # Binary crate — CLI only, depends on the library
 **`CanonicalTarHeader`** (`canonical.rs`) pairs a tar `Header` with its PAX
 extension key-value pairs, captured at read time. All header access goes
 through this type so that PAX values (which override the truncated USTAR
-fields) are never accidentally ignored. In particular, `link_name()` on this
-type checks `linkpath` in the PAX extensions before falling back to the
-100-byte USTAR field — the `tar` crate's `Header::link_name()` does not do
-this, which was the source of a production bug where hard link targets longer
-than 100 bytes were silently truncated and the links dropped. This type is
-derived from the same `CanonicalTarHeader` used in `protect-daemon`'s
-`vfs.rs`, extended with a PAX-aware `link_name()` method.
+fields) are never accidentally ignored. In particular, `link_name()` checks
+`linkpath` in the PAX extensions before falling back to the 100-byte USTAR
+field — the `tar` crate's `Header::link_name()` does not do this.
 
-**`spawn_blocking` discipline** (`lib.rs`): the public `convert()` function
-is `async` so it can be called from an async-heavy codebase, but all tar I/O
-runs inside a single `tokio::task::spawn_blocking` call. The synchronous
-`tar` crate is used throughout — async tar crates have unacceptable
-context-switch overhead for this workload.
+**`spawn_blocking` discipline** (`lib.rs`): all public async entry points
+dispatch synchronous tar I/O into `tokio::task::spawn_blocking`. The
+synchronous `tar` crate is used throughout — async tar crates have
+unacceptable context-switch overhead for this workload.
 
-**Streaming, not buffering** (`overlay.rs`, `squashfs.rs`): `merge_layers_into`
-takes a `Write` sink rather than returning a `Vec<u8>`. `write_squashfs`
-spawns `mksquashfs` and passes its stdin handle as that sink. File data flows
-from the layer blobs through the decompressor and tar parser directly into
-the pipe — neither the extracted files nor the merged tar are ever fully
-materialised on disk or in memory.
+**Streaming as the canonical implementation** (`overlay.rs`): the single
+implementation is `merge_layers_into_streaming`, which accepts layers via a
+`std::sync::mpsc` channel and a `Write` sink. The batch `convert()` path
+pre-loads all layers into a channel and delegates to the same function. The
+output format (squashfs, tar, directory) affects only what is passed as the
+`Write` sink — the merge algorithm itself is format-agnostic.
+
+**`ImageSpec` is direction-neutral**: the same type describes a conversion
+output target and a verification input source. This avoids a parallel set of
+types for read vs. write contexts while keeping the API surface small.
 
 ---
 
@@ -169,33 +267,54 @@ The tool expects a directory in OCI image layout format, as produced by
 
 Supported layer compression formats: gzip, zstd, bzip2, xz/lzma, and
 uncompressed. Format is determined from the `mediaType` field in the manifest,
-not from file contents.
+with magic byte detection as a fallback for layouts that omit `LayerSources`.
 
 ---
 
 ## CLI usage
 
-### Convert
+### Convert to squashfs
 
 ```bash
-oci2squashfs_cli convert --image ./my-image-dir --output my-image.squashfs
+oci2squashfs convert-squashfs --image ./my-image-dir --output my-image.squashfs
+# With an explicit mksquashfs binary:
+oci2squashfs convert-squashfs --image ./my-image-dir --output my-image.squashfs \
+    --mksquashfs /usr/local/bin/mksquashfs
+```
+
+### Convert to tar
+
+```bash
+oci2squashfs convert-tar --image ./my-image-dir --output my-image.tar
+```
+
+### Extract to directory
+
+```bash
+oci2squashfs convert-dir --image ./my-image-dir --output ./my-image-root
 ```
 
 ### Verify
 
-Mounts the squashfs via `squashfuse` and compares it against a reference
-directory (e.g. a `docker export` snapshot extracted with `tar -x -p` as
-root):
+Compare a generated squashfs against a reference directory:
 
 ```bash
-oci2squashfs_cli verify --squashfs my-image.squashfs --reference ./my-image-ref
+oci2squashfs verify --squashfs my-image.squashfs --reference ./my-image-ref
+```
+
+Compare a generated directory against a reference directory:
+
+```bash
+oci2squashfs verify --dir ./my-image-root --reference ./my-image-ref
 ```
 
 The verify subcommand reports:
-- Paths present only in the squashfs
-- Paths present only in the reference
+- Paths present only in the generated image (`+`)
+- Paths present only in the reference (`-`)
 - Per-file differences in type, mode, uid, gid, size, symlink target, and
-  SHA-256 content hash
+  SHA-256 content hash (`~`)
+
+Exits 0 if no differences are found, 1 otherwise.
 
 Note that a `docker export` reference will always show a small number of
 expected-only-in-reference paths (`.dockerenv`, `dev/console`, `dev/shm`,
@@ -210,7 +329,7 @@ These are not conversion bugs.
 
 | Crate | Purpose |
 |---|---|
-| `tokio` | Async runtime for public API and subprocess waiting |
+| `tokio` | Async runtime for public API and subprocess management |
 | `tar` | Synchronous tar reading and writing |
 | `flate2` | gzip decompression |
 | `zstd` | zstd decompression |
@@ -218,13 +337,14 @@ These are not conversion bugs.
 | `xz2` | xz/lzma decompression |
 | `serde` + `serde_json` | JSON parsing for index.json / manifest |
 | `sha2` | SHA-256 hashing in the verify subcommand |
-| `tempfile` | Temporary mountpoint directory in verify |
+| `tempfile` | Temporary squashfuse mountpoint in verify |
 | `clap` | CLI argument parsing |
 | `anyhow` | Error handling throughout |
 
 ## System dependencies
 
-- `mksquashfs` ≥ 4.6 (for functionally correct `-tar` stdin support); available
-  in `squashfs-tools` on most distributions
-- `squashfuse` (for the `verify` subcommand only)
-- `fusermount` or `umount` (for squashfuse unmounting in verify)
+- `mksquashfs` ≥ 4.6 (for `-tar` stdin support); available in `squashfs-tools`
+  on most distributions. Required only for squashfs output.
+- `squashfuse` (for `verify --squashfs` only)
+- `fusermount` or `umount` (for squashfuse unmounting; Linux and macOS/BSD
+  respectively)
