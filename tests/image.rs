@@ -279,6 +279,130 @@ fn load_manifest_empty_manifests_array_returns_error() {
 }
 
 #[test]
+fn load_manifest_nested_index_followed_to_single_image_manifest() {
+    // Reproduces the containerd/Docker Desktop two-level layout:
+    //   index.json → platform index (mediaType: ...image.index...)
+    //              → single-image manifest (mediaType: ...image.manifest...)
+    //              → layers
+    let dir = TempDir::new().unwrap();
+    let blobs = dir.path().join("blobs").join("sha256");
+    fs::create_dir_all(&blobs).unwrap();
+
+    // Write the layer blob.
+    let layer_data = [0x1f_u8, 0x8b, 0x00, 0x00]; // gzip magic
+    let layer_digest = sha256_hex(&layer_data);
+    fs::write(blobs.join(&layer_digest), &layer_data).unwrap();
+
+    // Write the inner single-image manifest.
+    let inner_manifest = serde_json::json!({
+        "schemaVersion": 2,
+        "mediaType": "application/vnd.oci.image.manifest.v1+json",
+        "layers": [{
+            "mediaType": "application/vnd.oci.image.layer.v1.tar+gzip",
+            "digest": format!("sha256:{layer_digest}"),
+            "size": layer_data.len(),
+        }],
+    });
+    let inner_bytes = serde_json::to_vec(&inner_manifest).unwrap();
+    let inner_digest = sha256_hex(&inner_bytes);
+    fs::write(blobs.join(&inner_digest), &inner_bytes).unwrap();
+
+    // Write the platform index that points at the inner manifest.
+    let platform_index = serde_json::json!({
+        "schemaVersion": 2,
+        "mediaType": "application/vnd.oci.image.index.v1+json",
+        "manifests": [{
+            "mediaType": "application/vnd.oci.image.manifest.v1+json",
+            "digest": format!("sha256:{inner_digest}"),
+            "size": inner_bytes.len(),
+            "platform": {"os": "linux", "architecture": "amd64"},
+        }],
+    });
+    let platform_bytes = serde_json::to_vec(&platform_index).unwrap();
+    let platform_digest = sha256_hex(&platform_bytes);
+    fs::write(blobs.join(&platform_digest), &platform_bytes).unwrap();
+
+    // Write index.json pointing at the platform index.
+    let index = serde_json::json!({
+        "schemaVersion": 2,
+        "mediaType": "application/vnd.oci.image.index.v1+json",
+        "manifests": [{
+            "mediaType": "application/vnd.oci.image.index.v1+json",
+            "digest": format!("sha256:{platform_digest}"),
+            "size": platform_bytes.len(),
+        }],
+    });
+    fs::write(
+        dir.path().join("index.json"),
+        serde_json::to_vec(&index).unwrap(),
+    )
+    .unwrap();
+
+    let manifest = load_manifest(dir.path()).unwrap();
+    assert_eq!(
+        manifest.layers.len(),
+        1,
+        "must find the layer through two levels of indirection"
+    );
+    assert!(
+        manifest.layers[0].media_type.ends_with("+gzip"),
+        "layer media type must be preserved through nested index traversal; got {:?}",
+        manifest.layers[0].media_type
+    );
+}
+
+#[test]
+fn load_manifest_nested_index_with_no_image_manifest_returns_error() {
+    // A nested index that contains only further index entries (no single-image
+    // manifest) must return a clear error rather than panicking or producing
+    // an empty layer list.
+    let dir = TempDir::new().unwrap();
+    let blobs = dir.path().join("blobs").join("sha256");
+    fs::create_dir_all(&blobs).unwrap();
+
+    // Platform index containing only another index entry, no manifest entry.
+    let platform_index = serde_json::json!({
+        "schemaVersion": 2,
+        "mediaType": "application/vnd.oci.image.index.v1+json",
+        "manifests": [{
+            "mediaType": "application/vnd.oci.image.index.v1+json",
+            "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "size": 0,
+        }],
+    });
+    let platform_bytes = serde_json::to_vec(&platform_index).unwrap();
+    let platform_digest = sha256_hex(&platform_bytes);
+    fs::write(blobs.join(&platform_digest), &platform_bytes).unwrap();
+
+    let index = serde_json::json!({
+        "schemaVersion": 2,
+        "mediaType": "application/vnd.oci.image.index.v1+json",
+        "manifests": [{
+            "mediaType": "application/vnd.oci.image.index.v1+json",
+            "digest": format!("sha256:{platform_digest}"),
+            "size": platform_bytes.len(),
+        }],
+    });
+    fs::write(
+        dir.path().join("index.json"),
+        serde_json::to_vec(&index).unwrap(),
+    )
+    .unwrap();
+
+    let result = load_manifest(dir.path());
+    assert!(
+        result.is_err(),
+        "all-index nested structure must return an error"
+    );
+    let err = result.unwrap_err();
+    let chain = format!("{err:#}");
+    assert!(
+        chain.contains("no single-image manifest entry"),
+        "error chain must explain why traversal failed; got: {chain}"
+    );
+}
+
+#[test]
 fn load_manifest_unsupported_digest_algorithm_returns_error() {
     let dir = TempDir::new().unwrap();
     let index = serde_json::json!({

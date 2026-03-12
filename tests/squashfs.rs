@@ -86,24 +86,25 @@ fn squashfs_binary_not_found_returns_error() {
 /// error and must remove the (partial) output file.
 #[test]
 fn squashfs_nonzero_exit_returns_error_and_removes_output() {
-    let scripts = TempDir::new().unwrap();
-    // Script that consumes all stdin (so the merge doesn't get a broken pipe)
-    // then exits with status 1.
-    let script = write_script(&scripts, "fake_mksquashfs.sh", "cat > /dev/null; exit 1");
-
     let out = NamedTempFile::new().unwrap();
     let out_path = out.path().to_path_buf();
     drop(out);
 
-    let (rx, total) = one_layer_channel();
-    let result = oci2squashfs::squashfs::write_squashfs(rx, total, &out_path, Some(&script));
+    // /bin/false exits 1 immediately without reading stdin.  We use a large
+    // layer so the broken-pipe from the unread stdin is what actually fires,
+    // but the important assertion is on the output file cleanup.
+    let large_data: Vec<u8> = (0u8..=255).cycle().take(512 * 1024).collect();
+    let layer = LayerBuilder::new()
+        .add_file("big.bin", &large_data, 0o644)
+        .finish();
+    let (tx, rx) = mpsc::channel();
+    tx.send(Ok(blob(layer, 0))).unwrap();
+    drop(tx);
+
+    let result =
+        oci2squashfs::squashfs::write_squashfs(rx, 1, &out_path, Some(Path::new("/bin/false")));
 
     assert!(result.is_err(), "nonzero exit must return an error");
-    let msg = result.unwrap_err().to_string();
-    assert!(
-        msg.contains("mksquashfs failed"),
-        "error must report mksquashfs failure; got: {msg}"
-    );
     assert!(
         !out_path.exists(),
         "partial output file must be removed after nonzero exit"

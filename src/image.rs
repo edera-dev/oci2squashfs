@@ -31,6 +31,9 @@ pub struct LayerBlob {
     pub index: usize,
 }
 
+const MEDIA_TYPE_MANIFEST: &str = "application/vnd.oci.image.manifest.v1+json";
+const MEDIA_TYPE_INDEX: &str = "application/vnd.oci.image.index.v1+json";
+
 /// Detect compression format by magic bytes. Used as a fallback when the
 /// manifest does not carry a mediaType for a layer (e.g. minimal Docker save
 /// layouts that omit LayerSources).
@@ -60,13 +63,7 @@ pub fn load_manifest(image_dir: &Path) -> Result<OciManifest> {
             .into_iter()
             .next()
             .context("index.json has no manifests")?;
-        let digest = strip_digest_prefix(&desc.digest)?;
-        let manifest_path = image_dir.join("blobs").join("sha256").join(digest);
-        let mdata = std::fs::read_to_string(&manifest_path)
-            .with_context(|| format!("reading manifest blob {}", manifest_path.display()))?;
-        let manifest: OciManifest =
-            serde_json::from_str(&mdata).context("parsing manifest blob")?;
-        return Ok(manifest);
+        return load_manifest_blob(image_dir, &desc).context("loading manifest from index.json");
     }
 
     // Docker save manifest.json
@@ -129,6 +126,54 @@ pub fn load_manifest(image_dir: &Path) -> Result<OciManifest> {
         "no index.json or manifest.json found in {}",
         image_dir.display()
     );
+}
+
+/// Resolve a single `OciDescriptor` to an `OciManifest`, following one level
+/// of nested index indirection if necessary.
+///
+/// containerd and Docker Desktop commonly produce a two-level structure for
+/// multi-platform images:
+///
+///   index.json → platform index (mediaType: ...image.index...)
+///              → per-platform manifest (mediaType: ...image.manifest...)
+///              → layers
+///
+/// When `desc` points at a nested index we pick the first entry whose
+/// mediaType is a single-image manifest and load that.  Entries that are
+/// themselves indexes are skipped.
+fn load_manifest_blob(image_dir: &Path, desc: &OciDescriptor) -> Result<OciManifest> {
+    let hex = strip_digest_prefix(&desc.digest)?;
+    let path = image_dir.join("blobs").join("sha256").join(hex);
+    let data = std::fs::read_to_string(&path)
+        .with_context(|| format!("reading manifest blob {}", path.display()))?;
+
+    // If this blob is a nested index, follow it one level deeper.
+    if desc.media_type == MEDIA_TYPE_INDEX {
+        let nested: OciIndex = serde_json::from_str(&data)
+            .with_context(|| format!("parsing nested index blob {}", path.display()))?;
+
+        let inner = nested
+            .manifests
+            .into_iter()
+            .find(|d| d.media_type == MEDIA_TYPE_MANIFEST)
+            .with_context(|| {
+                format!(
+                    "nested index at {} contains no single-image manifest entry \
+                     (mediaType {MEDIA_TYPE_MANIFEST})",
+                    path.display()
+                )
+            })?;
+
+        let inner_hex = strip_digest_prefix(&inner.digest)?;
+        let inner_path = image_dir.join("blobs").join("sha256").join(inner_hex);
+        let inner_data = std::fs::read_to_string(&inner_path)
+            .with_context(|| format!("reading inner manifest blob {}", inner_path.display()))?;
+        return serde_json::from_str(&inner_data)
+            .with_context(|| format!("parsing inner manifest blob {}", inner_path.display()));
+    }
+
+    // Direct single-image manifest.
+    serde_json::from_str(&data).with_context(|| format!("parsing manifest blob {}", path.display()))
 }
 
 /// Resolve layer descriptors to actual file paths.
