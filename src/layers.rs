@@ -3,7 +3,7 @@
 use anyhow::{Result, bail};
 use std::{
     fs::File,
-    io::{self, BufReader, Read},
+    io::{BufReader, Read},
     path::Path,
 };
 use tar::Archive;
@@ -29,12 +29,4 @@ pub fn open_layer(path: &Path, media_type: &str) -> Result<DynArchive> {
     archive.set_preserve_mtime(true);
     archive.set_unpack_xattrs(true);
     Ok(archive)
-}
-
-/// Read all raw bytes of a layer entry into memory.
-/// Returns (header_bytes, data_bytes) — header_bytes is the raw 512-byte block(s).
-pub fn read_entry_data(entry: &mut tar::Entry<impl Read>) -> Result<Vec<u8>> {
-    let mut buf = Vec::new();
-    io::copy(entry, &mut buf)?;
-    Ok(buf)
 }
