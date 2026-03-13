@@ -1,9 +1,9 @@
 //! Shared test helpers for integration and regression tests.
 #![allow(dead_code)]
 
-use oci2squashfs::canonical::CanonicalTarHeader;
-use oci2squashfs::image::LayerBlob;
-use oci2squashfs::overlay::normalize_path;
+use ocirender::canonical::CanonicalTarHeader;
+use ocirender::image::LayerBlob;
+use ocirender::overlay::normalize_path;
 use std::io::{Cursor, Write};
 use tar::{Archive, Builder, EntryType, Header};
 
@@ -195,7 +195,7 @@ pub fn blob(bytes: Vec<u8>, index: usize) -> LayerBlob {
 
 pub fn merge(layers: Vec<LayerBlob>) -> Vec<u8> {
     let mut out = Vec::new();
-    oci2squashfs::overlay::merge_layers_into(layers, &mut out).unwrap();
+    ocirender::overlay::merge_layers_into(layers, &mut out).unwrap();
     out
 }
 

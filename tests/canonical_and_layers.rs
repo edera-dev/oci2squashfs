@@ -7,7 +7,7 @@
 //!
 //! layers.rs: the unsupported media type error path in open_layer.
 
-use oci2squashfs::canonical::CanonicalTarHeader;
+use ocirender::canonical::CanonicalTarHeader;
 use tar::{Builder, EntryType};
 use tempfile::NamedTempFile;
 
@@ -177,7 +177,7 @@ fn write_hardlink_long_paths_produce_no_gnu_longname_entry() {
 #[test]
 fn open_layer_unsupported_media_type_returns_error() {
     let f = NamedTempFile::new().unwrap();
-    let result = oci2squashfs::layers::open_layer(f.path(), "application/vnd.edera.custom+lz4");
+    let result = ocirender::layers::open_layer(f.path(), "application/vnd.edera.custom+lz4");
     assert!(
         result.is_err(),
         "unsupported media type must return an error"
@@ -197,6 +197,6 @@ fn open_layer_unsupported_media_type_returns_error() {
 #[test]
 fn open_layer_empty_media_type_returns_error() {
     let f = NamedTempFile::new().unwrap();
-    let result = oci2squashfs::layers::open_layer(f.path(), "");
+    let result = ocirender::layers::open_layer(f.path(), "");
     assert!(result.is_err(), "empty media type must return an error");
 }

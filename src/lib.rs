@@ -367,10 +367,10 @@ pub async fn convert_dir_streaming(
 /// # Usage
 ///
 /// ```no_run
-/// # use oci2squashfs::{StreamingPacker, LayerMeta, ImageSpec};
+/// # use ocirender::{StreamingPacker, LayerMeta, ImageSpec};
 /// # use std::path::PathBuf;
 /// # async fn example() -> anyhow::Result<()> {
-/// let metas: Vec<LayerMeta> = /* from manifest */ # vec![];
+/// let metas: Vec<LayerMeta> = vec![]; // populated from the image manifest
 /// let packer = StreamingPacker::new(
 ///     metas,
 ///     ImageSpec::Squashfs { path: "out.squashfs".into(), binpath: None },

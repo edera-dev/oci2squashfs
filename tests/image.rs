@@ -4,7 +4,7 @@
 
 use std::fs;
 
-use oci2squashfs::image::{detect_media_type, load_manifest, resolve_layers};
+use ocirender::image::{detect_media_type, load_manifest, resolve_layers};
 use tempfile::TempDir;
 
 // ── helpers ───────────────────────────────────────────────────────────────────

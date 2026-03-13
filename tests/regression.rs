@@ -221,8 +221,8 @@ fn regress_layer_blob_stored_as_directory_with_order_index() {
     });
     fs::write(dir.path().join("index.json"), index_json.to_string()).unwrap();
 
-    let manifest = oci2squashfs::image::load_manifest(dir.path()).unwrap();
-    let layers = oci2squashfs::image::resolve_layers(dir.path(), &manifest)
+    let manifest = ocirender::image::load_manifest(dir.path()).unwrap();
+    let layers = ocirender::image::resolve_layers(dir.path(), &manifest)
         .expect("resolve_layers must find blobs stored as <hash>/<manifest-order> directories");
 
     assert_eq!(layers.len(), 2);

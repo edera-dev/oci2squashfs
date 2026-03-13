@@ -435,7 +435,7 @@ fn write_docker_manifest_json(
 
     let manifest_json = serde_json::json!([{
         "Config": format!("blobs/sha256/{config_digest}"),
-        "RepoTags": ["oci2squashfs-fixture:latest"],
+        "RepoTags": ["ocirender-fixture:latest"],
         "Layers": layer_paths,
         "LayerSources": layer_sources,
     }]);

@@ -1,4 +1,4 @@
-# oci2squashfs
+# ocirender
 
 A Rust library and CLI tool for converting OCI container images directly into
 squashfs filesystem images, plain tar archives, or extracted directories —
@@ -276,22 +276,22 @@ with magic byte detection as a fallback for layouts that omit `LayerSources`.
 ### Convert to squashfs
 
 ```bash
-oci2squashfs convert-squashfs --image ./my-image-dir --output my-image.squashfs
+ocirender convert-squashfs --image ./my-image-dir --output my-image.squashfs
 # With an explicit mksquashfs binary:
-oci2squashfs convert-squashfs --image ./my-image-dir --output my-image.squashfs \
+ocirender convert-squashfs --image ./my-image-dir --output my-image.squashfs \
     --mksquashfs /usr/local/bin/mksquashfs
 ```
 
 ### Convert to tar
 
 ```bash
-oci2squashfs convert-tar --image ./my-image-dir --output my-image.tar
+ocirender convert-tar --image ./my-image-dir --output my-image.tar
 ```
 
 ### Extract to directory
 
 ```bash
-oci2squashfs convert-dir --image ./my-image-dir --output ./my-image-root
+ocirender convert-dir --image ./my-image-dir --output ./my-image-root
 ```
 
 ### Verify
@@ -299,13 +299,13 @@ oci2squashfs convert-dir --image ./my-image-dir --output ./my-image-root
 Compare a generated squashfs against a reference directory:
 
 ```bash
-oci2squashfs verify --squashfs my-image.squashfs --reference ./my-image-ref
+ocirender verify --squashfs my-image.squashfs --reference ./my-image-ref
 ```
 
 Compare a generated directory against a reference directory:
 
 ```bash
-oci2squashfs verify --dir ./my-image-root --reference ./my-image-ref
+ocirender verify --dir ./my-image-root --reference ./my-image-ref
 ```
 
 The verify subcommand reports:

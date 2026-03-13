@@ -2,10 +2,10 @@ use anyhow::{Result, bail};
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
-use oci2squashfs::ImageSpec;
+use ocirender::ImageSpec;
 
 #[derive(Parser)]
-#[command(name = "oci2squashfs", about = "Convert an OCI image to squashfs")]
+#[command(name = "ocirender", about = "Convert an OCI image to squashfs")]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -72,17 +72,17 @@ async fn main() -> Result<()> {
             mksquashfs,
         } => {
             println!("Converting {} → {}", image.display(), output.display());
-            oci2squashfs::convert_mksquashfs(&image, &output, mksquashfs.as_deref()).await?;
+            ocirender::convert_mksquashfs(&image, &output, mksquashfs.as_deref()).await?;
             println!("Done: {}", output.display());
         }
         Commands::ConvertTar { image, output } => {
             println!("Converting {} → {}", image.display(), output.display());
-            oci2squashfs::convert_tar(&image, &output).await?;
+            ocirender::convert_tar(&image, &output).await?;
             println!("Done: {}", output.display());
         }
         Commands::ConvertDir { image, output } => {
             println!("Extracting {} → {}", image.display(), output.display());
-            oci2squashfs::convert_dir(&image, &output).await?;
+            ocirender::convert_dir(&image, &output).await?;
             println!("Done: {}", output.display());
         }
         Commands::Verify {
@@ -101,7 +101,7 @@ async fn main() -> Result<()> {
             };
 
             let report =
-                tokio::task::spawn_blocking(move || oci2squashfs::verify::verify(spec, &reference))
+                tokio::task::spawn_blocking(move || ocirender::verify::verify(spec, &reference))
                     .await??;
 
             if report.is_clean() {

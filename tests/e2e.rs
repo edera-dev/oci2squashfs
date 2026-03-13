@@ -1,4 +1,4 @@
-//! End-to-end tests for the oci2squashfs CLI.
+//! End-to-end tests for the ocirender CLI.
 //!
 //! These tests require the following binaries to be present on PATH:
 //!   - mksquashfs       (squashfs-tools, >= 4.6)
@@ -31,12 +31,12 @@ const REQUIRED_BINARIES: &[(&str, &str)] = &[
     ("umoci", "umoci (OCI image unpacker)"),
 ];
 
-/// Returns the path to the compiled `oci2squashfs` binary produced by
+/// Returns the path to the compiled `ocirender` binary produced by
 /// the current `cargo test` invocation.  Panics if it cannot be located.
 fn cli_bin() -> PathBuf {
-    // CARGO_BIN_EXE_oci2squashfs is set by Cargo for [[bin]] targets when
+    // CARGO_BIN_EXE_ocirender is set by Cargo for [[bin]] targets when
     // running tests.
-    let var = env!("CARGO_BIN_EXE_oci2squashfs");
+    let var = env!("CARGO_BIN_EXE_ocirender");
     PathBuf::from(var)
 }
 
@@ -47,7 +47,7 @@ fn require_binaries() {
     let cli = cli_bin();
     assert!(
         cli.exists(),
-        "oci2squashfs binary not found at {cli:?}; \
+        "ocirender binary not found at {cli:?}; \
          ensure you ran `cargo test --features e2e`"
     );
 
@@ -118,7 +118,7 @@ static FIXTURES_BASIC: OnceLock<Fixtures> = OnceLock::new();
 fn get_fixtures_basic() -> &'static Fixtures {
     FIXTURES_BASIC.get_or_init(|| {
         let cli = cli_bin();
-        assert!(cli.exists(), "oci2squashfs binary not found at {cli:?}");
+        assert!(cli.exists(), "ocirender binary not found at {cli:?}");
         let dir = TempDir::new().expect("creating fixture temp dir");
         let images = generate_fixtures(dir.path()).expect("generating OCI fixtures");
         Fixtures {
@@ -132,7 +132,7 @@ fn get_fixtures_basic() -> &'static Fixtures {
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
-/// Run `oci2squashfs convert-squashfs` and return the path to the output file.
+/// Run `ocirender convert-squashfs` and return the path to the output file.
 fn convert_squashfs(image_dir: &Path, out_dir: &Path, name: &str) -> PathBuf {
     let output = out_dir.join(format!("{name}.squashfs"));
     let status = Command::new(cli_bin())
@@ -144,10 +144,10 @@ fn convert_squashfs(image_dir: &Path, out_dir: &Path, name: &str) -> PathBuf {
             output.to_str().unwrap(),
         ])
         .status()
-        .expect("spawning oci2squashfs convert-squashfs");
+        .expect("spawning ocirender convert-squashfs");
     assert!(
         status.success(),
-        "oci2squashfs convert-squashfs failed for {name} (image: {})",
+        "ocirender convert-squashfs failed for {name} (image: {})",
         image_dir.display()
     );
     output
@@ -177,7 +177,7 @@ fn umoci_unpack(oci_dir: &Path, reference_tag: &str, out_dir: &Path, name: &str)
     bundle.join("rootfs")
 }
 
-/// Run `oci2squashfs verify` and assert it exits successfully (no differences).
+/// Run `ocirender verify` and assert it exits successfully (no differences).
 fn verify_clean(squashfs: &Path, reference: &Path, label: &str) {
     let status = Command::new(cli_bin())
         .args([
@@ -188,7 +188,7 @@ fn verify_clean(squashfs: &Path, reference: &Path, label: &str) {
             reference.to_str().unwrap(),
         ])
         .status()
-        .expect("spawning oci2squashfs verify");
+        .expect("spawning ocirender verify");
     assert!(
         status.success(),
         "verify reported differences for {label}\n  squashfs: {}\n  reference: {}",
@@ -197,7 +197,7 @@ fn verify_clean(squashfs: &Path, reference: &Path, label: &str) {
     );
 }
 
-/// Run `oci2squashfs convert-tar` and return the path to the output file.
+/// Run `ocirender convert-tar` and return the path to the output file.
 fn convert_tar(image_dir: &Path, out_dir: &Path, name: &str) -> PathBuf {
     let output = out_dir.join(format!("{name}.tar"));
     let status = Command::new(cli_bin())
@@ -209,16 +209,16 @@ fn convert_tar(image_dir: &Path, out_dir: &Path, name: &str) -> PathBuf {
             output.to_str().unwrap(),
         ])
         .status()
-        .expect("spawning oci2squashfs convert-tar");
+        .expect("spawning ocirender convert-tar");
     assert!(
         status.success(),
-        "oci2squashfs convert-tar failed for {name} (image: {})",
+        "ocirender convert-tar failed for {name} (image: {})",
         image_dir.display()
     );
     output
 }
 
-/// Run `oci2squashfs convert-dir` and return the output directory path.
+/// Run `ocirender convert-dir` and return the output directory path.
 fn convert_dir(image_dir: &Path, out_dir: &Path, name: &str) -> PathBuf {
     let output = out_dir.join(name);
     let status = Command::new(cli_bin())
@@ -230,10 +230,10 @@ fn convert_dir(image_dir: &Path, out_dir: &Path, name: &str) -> PathBuf {
             output.to_str().unwrap(),
         ])
         .status()
-        .expect("spawning oci2squashfs convert-dir");
+        .expect("spawning ocirender convert-dir");
     assert!(
         status.success(),
-        "oci2squashfs convert-dir failed for {name} (image: {})",
+        "ocirender convert-dir failed for {name} (image: {})",
         image_dir.display()
     );
     output
